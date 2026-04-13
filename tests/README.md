@@ -45,6 +45,8 @@ If the server is not running, many tests skip or no-op with a message instead of
 
 ## End-to-end tests (`e2e_test.rs`)
 
+These resolve the `model-rs` executable via the runtime variable **`CARGO_BIN_EXE_model_rs`** (set by Cargo for integration tests), with a fallback path under `target/` next to the package manifest—so renaming or moving the repo directory does not require a manual path override.
+
 ```bash
 cargo build --release
 cargo test --test e2e_test -- --test-threads=1

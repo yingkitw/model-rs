@@ -13,10 +13,11 @@ const TEST_PORT: u16 = 3020; // Use different port to avoid conflicts
 
 /// Path to the `model-rs` binary.
 ///
-/// `cargo test` sets `CARGO_BIN_EXE_model_rs` at compile time. `cargo check --tests` does not, so we
-/// fall back to `target/{debug|release}/model-rs` (honours `CARGO_TARGET_DIR` when set at runtime).
+/// Prefer the runtime `CARGO_BIN_EXE_*` value Cargo sets when running integration tests (avoids a
+/// stale absolute path baked in via `option_env!` after moving/renaming the repo). Fall back to
+/// `target/{debug|release}/model-rs` (honours `CARGO_TARGET_DIR` when set).
 fn model_rs_bin() -> PathBuf {
-    if let Some(p) = option_env!("CARGO_BIN_EXE_model_rs") {
+    if let Ok(p) = std::env::var("CARGO_BIN_EXE_model_rs") {
         return PathBuf::from(p);
     }
     let target_root = std::env::var("CARGO_TARGET_DIR")
