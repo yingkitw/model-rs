@@ -12,6 +12,8 @@ pub enum ModelArchitecture {
     Bert,
     Phi,
     Granite,
+    Gemma,
+    Qwen2,
     Mlx,
 }
 

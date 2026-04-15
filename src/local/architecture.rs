@@ -70,6 +70,8 @@ pub fn detect_architecture(model_path: &Path) -> Result<ModelArchitecture> {
         "bert" | "roberta" | "albert" => Ok(ModelArchitecture::Bert),
         "phi" => Ok(ModelArchitecture::Phi),
         "granite" => Ok(ModelArchitecture::Granite),
+        "gemma" | "gemma2" | "gemma3" | "gemma4" => Ok(ModelArchitecture::Gemma),
+        "qwen2" | "qwen2_moe" => Ok(ModelArchitecture::Qwen2),
         _ => {
             warn!("Unknown model type '{}', defaulting to Llama", model_type);
             Ok(ModelArchitecture::Llama)

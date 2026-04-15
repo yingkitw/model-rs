@@ -126,6 +126,8 @@ impl LocalModel {
                 ModelArchitecture::GraniteMoeHybrid => LocalBackend::load_granite_moe_hybrid(&config, &device)?,
                 ModelArchitecture::Bert => LocalBackend::load_bert(&config, &device)?,
                 ModelArchitecture::Phi => LocalBackend::load_phi3(&config, &device)?,
+                ModelArchitecture::Gemma => LocalBackend::load_gemma(&config, &device)?,
+                ModelArchitecture::Qwen2 => LocalBackend::load_qwen2(&config, &device)?,
                 _ => {
                     warn!("Architecture {:?} not yet fully implemented", architecture);
                     None

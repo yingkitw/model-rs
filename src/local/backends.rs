@@ -9,6 +9,7 @@ use crate::local::LocalModelConfig;
 use candle_core::{DType, Device, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::models::bert::{BertModel, Config as BertConfig};
+use candle_transformers::models::gemma3::{Config as GemmaConfig, Model as GemmaModel};
 use candle_transformers::models::granitemoehybrid::{
     GraniteMoeHybrid, GraniteMoeHybridConfig, GraniteMoeHybridInternalConfig,
 };
@@ -16,6 +17,7 @@ use candle_transformers::models::llama::{Cache, Config as LlamaConfig, Llama};
 use candle_transformers::models::mamba::{Config as MambaConfig, Model as MambaModel};
 use candle_transformers::models::mistral::{Config as MistralConfig, Model as MistralModel};
 use candle_transformers::models::phi3::{Config as Phi3Config, Model as Phi3Model};
+use candle_transformers::models::qwen2::{Config as Qwen2Config, ModelForCausalLM as Qwen2Model};
 use std::fs;
 use std::path::Path;
 use std::time::Instant;
@@ -55,6 +57,18 @@ pub enum LocalBackend {
 
     /// BERT-family encoder-only model
     Bert { model: BertModel },
+
+    /// Gemma model (Gemma 2/3/4) with configuration
+    Gemma {
+        model: GemmaModel,
+        config: GemmaConfig,
+    },
+
+    /// Qwen2 model with configuration
+    Qwen2 {
+        model: Qwen2Model,
+        config: Qwen2Config,
+    },
 
     /// GGUF quantized model backend (feature-gated)
     #[cfg(feature = "gguf")]
@@ -185,10 +199,7 @@ impl LocalBackend {
                 let t_warm = Instant::now();
                 let mut warm_cache =
                     Cache::new(true, DType::F32, &llama_config, device).map_err(|e| {
-                        ModelError::LocalModelError(format!(
-                            "Failed to create warmup cache: {}",
-                            e
-                        ))
+                        ModelError::LocalModelError(format!("Failed to create warmup cache: {}", e))
                     })?;
                 let warm_token: u32 = 0;
                 for pos in 0..warmup_tokens {
@@ -404,6 +415,82 @@ impl LocalBackend {
 
         info!("Model initialized");
         Ok(Some(LocalBackend::Bert { model }))
+    }
+
+    pub fn load_gemma(config: &LocalModelConfig, device: &Device) -> Result<Option<Self>> {
+        info!("Loading Gemma model weights...");
+
+        let config_path = config.model_path.join("config.json");
+        if !config_path.exists() {
+            return Err(ModelError::LocalModelError(format!(
+                "config.json not found in {}\n\nHint: Ensure the model directory contains all required files.\nUse 'model-rs download <model>' to re-download the model.",
+                config.model_path.display()
+            )));
+        }
+
+        let config_content = fs::read_to_string(&config_path)?;
+        let gemma_cfg: GemmaConfig = serde_json::from_str(&config_content)
+            .map_err(|e| ModelError::LocalModelError(format!("Failed to parse config: {}", e)))?;
+
+        let weight_files = find_weight_files(&config.model_path)?;
+        if weight_files.is_empty() {
+            warn!("No .safetensors files found");
+            return Ok(None);
+        }
+
+        info!("Loading {} weight file(s)...", weight_files.len());
+        let vb = unsafe {
+            VarBuilder::from_mmaped_safetensors(&weight_files, DType::F32, device).map_err(|e| {
+                ModelError::LocalModelError(format!("Failed to load weights: {}", e))
+            })?
+        };
+
+        let model = GemmaModel::new(false, &gemma_cfg, vb)
+            .map_err(|e| ModelError::LocalModelError(format!("Failed to create model: {}", e)))?;
+
+        info!("Model initialized");
+        Ok(Some(LocalBackend::Gemma {
+            model,
+            config: gemma_cfg,
+        }))
+    }
+
+    pub fn load_qwen2(config: &LocalModelConfig, device: &Device) -> Result<Option<Self>> {
+        info!("Loading Qwen2 model weights...");
+
+        let config_path = config.model_path.join("config.json");
+        if !config_path.exists() {
+            return Err(ModelError::LocalModelError(format!(
+                "config.json not found in {}\n\nHint: Ensure the model directory contains all required files.\nUse 'model-rs download <model>' to re-download the model.",
+                config.model_path.display()
+            )));
+        }
+
+        let config_content = fs::read_to_string(&config_path)?;
+        let qwen2_cfg: Qwen2Config = serde_json::from_str(&config_content)
+            .map_err(|e| ModelError::LocalModelError(format!("Failed to parse config: {}", e)))?;
+
+        let weight_files = find_weight_files(&config.model_path)?;
+        if weight_files.is_empty() {
+            warn!("No .safetensors files found");
+            return Ok(None);
+        }
+
+        info!("Loading {} weight file(s)...", weight_files.len());
+        let vb = unsafe {
+            VarBuilder::from_mmaped_safetensors(&weight_files, DType::F32, device).map_err(|e| {
+                ModelError::LocalModelError(format!("Failed to load weights: {}", e))
+            })?
+        };
+
+        let model = Qwen2Model::new(&qwen2_cfg, vb)
+            .map_err(|e| ModelError::LocalModelError(format!("Failed to create model: {}", e)))?;
+
+        info!("Model initialized");
+        Ok(Some(LocalBackend::Qwen2 {
+            model,
+            config: qwen2_cfg,
+        }))
     }
 
     /// Load a GGUF quantized model from the given path
