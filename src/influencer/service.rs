@@ -4,6 +4,7 @@ use crate::error::Result;
 ///
 /// This trait defines the interface for both local and remote LLM services,
 /// allowing for interchangeable backends.
+#[allow(async_fn_in_trait)]
 pub trait LlmService {
     /// Generate text with the given prompt
     async fn generate_text(&mut self, prompt: &str, max_tokens: usize, temperature: f32) -> Result<String>;

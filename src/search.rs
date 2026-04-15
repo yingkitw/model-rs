@@ -9,8 +9,9 @@ const DEFAULT_MIRROR: &str = "https://hf-mirror.com";
 struct ModelInfo {
     #[serde(default)]
     id: Option<String>,
+    #[serde(rename = "modelId")]
     #[serde(default)]
-    modelId: Option<String>,
+    model_id: Option<String>,
     #[serde(alias = "author")]  // Handle both "author" and "authorId"
     #[serde(default)]
     author_name: Option<String>,
@@ -79,7 +80,7 @@ pub async fn search_models(
 
     for (index, model) in search_result.iter().enumerate() {
         let model_id = model.id.as_ref()
-            .or(model.modelId.as_ref())
+            .or(model.model_id.as_ref())
             .map(|s| s.as_str())
             .unwrap_or("unknown");
 
@@ -117,7 +118,7 @@ mod tests {
         let json = r#"{"modelId": "test/model", "author": "test"}"#;
         let info: ModelInfo = serde_json::from_str(json).unwrap();
 
-        assert_eq!(info.modelId, Some("test/model".to_string()));
+        assert_eq!(info.model_id, Some("test/model".to_string()));
         assert_eq!(info.author_name, Some("test".to_string()));
     }
 
@@ -176,7 +177,7 @@ mod tests {
         let info: ModelInfo = serde_json::from_str(json).unwrap();
 
         assert_eq!(info.id, None);
-        assert_eq!(info.modelId, None);
+        assert_eq!(info.model_id, None);
         assert_eq!(info.author_name, None);
         assert_eq!(info.downloads, None);
         assert_eq!(info.likes, None);
