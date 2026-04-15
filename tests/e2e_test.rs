@@ -803,8 +803,8 @@ async fn test_full_workflow() {
 
     if !wait_for_health_port(port, Duration::from_secs(120)).await {
         let mut err = String::new();
-        if let Some(stderr) = server_cmd.stderr() {
-            let _ = stderr.read_to_string(&mut err);
+        if let Some(stderr) = server_cmd.stderr.as_mut() {
+            let _ = Read::read_to_string(stderr, &mut err);
         }
         let _ = server_cmd.kill();
         let _ = server_cmd.wait();
@@ -878,13 +878,20 @@ fn test_config_with_env() {
     assert!(output.status.success(), "Config should succeed");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+    // `model-rs config` renders via termimad/crossterm; captured stdout includes ANSI SGR codes,
+    // so match the Generation Parameters slice instead of a literal `- Temperature: 0.5` line.
+    let generation = stdout
+        .split("Generation Parameters")
+        .nth(1)
+        .and_then(|s| s.split("Device Settings").next())
+        .unwrap_or("");
     assert!(
-        stdout.contains("**Temperature:** `0.5`"),
-        "config output should reflect MODEL_RS_TEMPERATURE=0.5, got: {stdout}"
+        generation.contains("Temperature") && generation.contains("0.5"),
+        "config output should reflect MODEL_RS_TEMPERATURE=0.5 in Generation Parameters, got: {stdout}"
     );
     assert!(
-        stdout.contains("**Max Tokens:** `100`"),
-        "config output should reflect MODEL_RS_MAX_TOKENS=100, got: {stdout}"
+        generation.contains("Max Tokens") && generation.contains("100"),
+        "config output should reflect MODEL_RS_MAX_TOKENS=100 in Generation Parameters, got: {stdout}"
     );
 }
 
