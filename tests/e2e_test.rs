@@ -3,11 +3,14 @@
 //! These tests cover the complete workflow of the model-rs CLI tool,
 //! including CLI commands, model operations, and API server functionality.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::Duration;
 use tokio::time::{sleep, timeout};
 
+/// Suggested HF id when no local weights are available (hint text only).
 const TEST_MODEL: &str = "TinyLlama/TinyLlama-1.1B-Chat-v1.0";
 const TEST_PORT: u16 = 3020; // Use different port to avoid conflicts
 
@@ -49,6 +52,99 @@ fn run_model_rs(args: &[&str]) -> std::io::Result<std::process::Output> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
+}
+
+/// Run `model-rs` with extra environment variables (isolates tests from the parent process).
+fn run_model_rs_with_env(
+    args: &[&str],
+    envs: &[(&str, &str)],
+) -> std::io::Result<std::process::Output> {
+    let binary_path = model_rs_bin();
+    if !binary_path.exists() {
+        panic!("model-rs binary not found at {}.", binary_path.display());
+    }
+    let mut cmd = Command::new(&binary_path);
+    for (key, val) in envs {
+        cmd.env(key, val);
+    }
+    cmd.args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+}
+
+/// Unique port per test that spawns `serve`, so parallel `cargo test` does not collide.
+fn alloc_e2e_listen_port() -> u16 {
+    static NEXT: AtomicU16 = AtomicU16::new(4_100);
+    NEXT.fetch_add(1, Ordering::SeqCst)
+}
+
+fn first_model_path_from_list_output(output: &str) -> Option<PathBuf> {
+    for raw_line in output.lines() {
+        let line = raw_line.trim_start();
+        let Some(rest) = line.strip_prefix("- **Path:** `") else {
+            continue;
+        };
+        let Some(end) = rest.find('`') else {
+            continue;
+        };
+        let p = PathBuf::from(&rest[..end]);
+        if p.is_dir() {
+            return Some(p);
+        }
+    }
+    None
+}
+
+/// Local model directory for tests that need a running server.
+///
+/// Order: `MODEL_RS_E2E_MODEL_PATH` (must exist), else first path from `model-rs list`.
+fn resolve_e2e_model_path() -> Option<PathBuf> {
+    if let Ok(p) = std::env::var("MODEL_RS_E2E_MODEL_PATH") {
+        let pb = PathBuf::from(p);
+        if pb.is_dir() {
+            return Some(pb);
+        }
+    }
+    let list_output = run_model_rs(&["list"]).ok()?;
+    if !list_output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&list_output.stdout);
+    first_model_path_from_list_output(&stdout)
+}
+
+async fn wait_for_health_port(port: u16, max_wait: Duration) -> bool {
+    let client = reqwest::Client::new();
+    let url = format!("http://127.0.0.1:{port}/health");
+    let deadline = tokio::time::Instant::now() + max_wait;
+    while tokio::time::Instant::now() < deadline {
+        if let Ok(resp) = timeout(Duration::from_secs(2), client.get(&url).send()).await {
+            if let Ok(resp) = resp {
+                if resp.status().is_success() {
+                    return true;
+                }
+            }
+        }
+        sleep(Duration::from_millis(200)).await;
+    }
+    false
+}
+
+fn spawn_serve_child(model_path: &Path, port: u16) -> std::io::Result<Child> {
+    Command::new(model_rs_bin())
+        .args([
+            "serve",
+            "--model-path",
+            &model_path.display().to_string(),
+            "--port",
+            &port.to_string(),
+            "--device",
+            "cpu",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
 }
 
 /// Test 1: Verify CLI binary exists and is executable
@@ -689,63 +785,36 @@ async fn test_embeddings_endpoint() {
 
 // === Integration Test ===
 
-/// Test 24: Full workflow test (requires model to be downloaded)
+/// Test 24: Full workflow test (requires a local model directory)
 ///
-/// This test performs a complete workflow:
-/// 1. List models
-/// 2. Start server (if model exists)
-/// 3. Generate text via API
-/// 4. Stop server
+/// Uses `MODEL_RS_E2E_MODEL_PATH` or the first model from `model-rs list`. If neither is
+/// available, the test returns early so `cargo test` stays green on clean checkouts.
 #[tokio::test]
-#[ignore] // Run with: cargo test --test e2e_test test_full_workflow -- --ignored
 async fn test_full_workflow() {
-    // Step 1: List models to find a valid model
-    let list_output = run_model_rs(&["list"])
-        .expect("Should list models");
-    
-    let stdout = String::from_utf8_lossy(&list_output.stdout);
-    
-    // Skip if no models found
-    if stdout.contains("No models found") {
-        eprintln!("No models found. Skipping full workflow test.");
+    let Some(model_path) = resolve_e2e_model_path() else {
+        eprintln!(
+            "No local model for test_full_workflow: set MODEL_RS_E2E_MODEL_PATH or run `model-rs download {TEST_MODEL}`."
+        );
         return;
-    }
-
-    // Step 2: Find first model path from list output
-    // This is a simplified extraction - in real tests you'd parse the output properly
-    let model_path = extract_model_path(&stdout);
-    let model_path = match model_path {
-        Some(path) => path,
-        None => {
-            eprintln!("Could not extract model path from list output. Skipping full workflow test.");
-            return;
-        }
     };
 
-    // Step 3: Start server in background
-    let port = TEST_PORT + 1; // Use different port
-    let mut server_cmd = Command::new(model_rs_bin())
-        .args([
-            "serve",
-            "--model-path",
-            &model_path,
-            "--port",
-            &port.to_string(),
-            "--device",
-            "cpu", // Use CPU to avoid GPU issues
-        ])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("Should start server");
+    let port = alloc_e2e_listen_port();
+    let mut server_cmd = spawn_serve_child(&model_path, port).expect("Should start server");
 
-    // Wait for server to start
-    sleep(Duration::from_secs(5)).await;
+    if !wait_for_health_port(port, Duration::from_secs(120)).await {
+        let mut err = String::new();
+        if let Some(stderr) = server_cmd.stderr() {
+            let _ = stderr.read_to_string(&mut err);
+        }
+        let _ = server_cmd.kill();
+        let _ = server_cmd.wait();
+        panic!(
+            "Server did not become healthy on port {port}. stderr (if any): {err}"
+        );
+    }
 
-    // Step 4: Test API endpoint
     let client = reqwest::Client::new();
-    let url = format!("http://localhost:{}/v1/generate", port);
-    
+    let url = format!("http://127.0.0.1:{port}/v1/generate");
     let response = client
         .post(&url)
         .json(&serde_json::json!({
@@ -753,155 +822,79 @@ async fn test_full_workflow() {
             "max_tokens": 10
         }))
         .send()
-        .await;
+        .await
+        .expect("request should complete");
 
-    match response {
-        Ok(resp) => {
-            assert_eq!(resp.status(), 200, "Full workflow: generate should succeed");
-            
-            let body = resp.json::<serde_json::Value>().await
-                .expect("Should parse response");
-            
-            assert!(body.get("text").is_some(), "Should have text response");
-            println!("✓ Full workflow test passed");
-        }
-        Err(e) => {
-            eprintln!("API request failed in full workflow: {}", e);
-        }
-    }
+    assert_eq!(
+        response.status(),
+        200,
+        "Full workflow: generate should succeed"
+    );
 
-    // Step 5: Stop server
+    let body = response
+        .json::<serde_json::Value>()
+        .await
+        .expect("Should parse response");
+    assert!(body.get("text").is_some(), "Should have text response");
+
     let _ = server_cmd.kill();
     let _ = server_cmd.wait();
 }
 
-/// Helper to extract model path from list output
-fn extract_model_path(output: &str) -> Option<String> {
-    // Simple extraction - looks for paths in the output
-    // In a real implementation, you'd parse the output more carefully
-    for line in output.lines() {
-        if line.contains("~") || line.contains("/") {
-            if line.contains("models") || line.contains("cache") {
-                // Extract path (this is simplified)
-                if let Some(start) = line.find('~') {
-                    let path = line[start..].trim().to_string();
-                    if !path.is_empty() {
-                        return Some(path);
-                    }
-                }
-            }
-        }
-    }
-    None
-}
-
-/// Test 25: Server startup and shutdown
-#[test]
-#[ignore] // Run with: cargo test --test e2e_test test_server_lifecycle -- --ignored
-fn test_server_lifecycle() {
-    // Find a model
-    let list_output = run_model_rs(&["list"])
-        .expect("Should list models");
-    
-    let stdout = String::from_utf8_lossy(&list_output.stdout);
-    
-    if stdout.contains("No models found") {
-        eprintln!("No models found. Skipping server lifecycle test.");
+/// Test 25: Server startup and health (no curl; portable)
+#[tokio::test]
+async fn test_server_lifecycle() {
+    let Some(model_path) = resolve_e2e_model_path() else {
+        eprintln!(
+            "No local model for test_server_lifecycle: set MODEL_RS_E2E_MODEL_PATH or run `model-rs download {TEST_MODEL}`."
+        );
         return;
-    }
-
-    let model_path = match extract_model_path(&stdout) {
-        Some(path) => path,
-        None => {
-            eprintln!("Could not extract model path. Skipping server lifecycle test.");
-            return;
-        }
     };
 
-    let port = TEST_PORT + 2;
+    let port = alloc_e2e_listen_port();
+    let mut server = spawn_serve_child(&model_path, port).expect("Should start server");
 
-    // Start server
-    let mut server = Command::new(model_rs_bin())
-        .args([
-            "serve",
-            "--model-path",
-            &model_path,
-            "--port",
-            &port.to_string(),
-            "--device",
-            "cpu",
-        ])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("Should start server");
+    assert!(
+        wait_for_health_port(port, Duration::from_secs(120)).await,
+        "server health check failed on port {port}"
+    );
 
-    // Give it time to start
-    std::thread::sleep(Duration::from_secs(3));
-
-    // Check if server is responsive
-    let health_check = Command::new("curl")
-        .args(["-s", "-o", "/dev/null", "-w", "%{http_code}", &format!("http://localhost:{}/health", port)])
-        .output();
-
-    match health_check {
-        Ok(output) => {
-            let status_code = String::from_utf8_lossy(&output.stdout);
-            if status_code == "200" {
-                println!("✓ Server started successfully");
-            } else {
-                eprintln!("Server returned status code: {}", status_code);
-            }
-        }
-        Err(e) => {
-            eprintln!("Failed to check server health: {}", e);
-        }
-    }
-
-    // Stop server
     let _ = server.kill();
-    match server.wait() {
-        Ok(status) => println!("✓ Server stopped with status: {}", status),
-        Err(e) => eprintln!("Failed to stop server: {}", e),
-    }
+    let _ = server.wait();
 }
 
-/// Test 26: Config command with environment variables
+/// Test 26: Config command with environment variables (child process env only)
 #[test]
-#[ignore] // Run with: cargo test --test e2e_test test_config_with_env -- --ignored
 fn test_config_with_env() {
-    // Set environment variable
-    unsafe {
-        std::env::set_var("MODEL_RS_TEMPERATURE", "0.5");
-        std::env::set_var("MODEL_RS_MAX_TOKENS", "100");
-    }
-
-    // Run config command
-    let output = run_model_rs(&["config"])
-        .expect("Should execute config command");
+    let output = run_model_rs_with_env(
+        &["config"],
+        &[
+            ("MODEL_RS_TEMPERATURE", "0.5"),
+            ("MODEL_RS_MAX_TOKENS", "100"),
+        ],
+    )
+    .expect("Should execute config command");
 
     assert!(output.status.success(), "Config should succeed");
-    
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    println!("{}", stdout);
 
-    // Cleanup
-    unsafe {
-        std::env::remove_var("MODEL_RS_TEMPERATURE");
-        std::env::remove_var("MODEL_RS_MAX_TOKENS");
-    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("**Temperature:** `0.5`"),
+        "config output should reflect MODEL_RS_TEMPERATURE=0.5, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("**Max Tokens:** `100`"),
+        "config output should reflect MODEL_RS_MAX_TOKENS=100, got: {stdout}"
+    );
 }
 
 /// Test 27: Cache clear command
 #[test]
-#[ignore] // Temporarily ignored due to CLI argument conflict (-e used by both enable and evict)
 fn test_cache_clear() {
-    // Note: This test is safe to run as it just clears the in-memory cache
-    let output = run_model_rs(&["cache", "--clear"])
-        .expect("Should execute cache clear");
+    let output = run_model_rs(&["cache", "--clear"]).expect("Should execute cache clear");
 
     assert!(output.status.success(), "Cache clear should succeed");
-    
+
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("Cache cleared") || stdout.contains("cleared"),
@@ -933,23 +926,29 @@ fn test_nonexistent_model_operations() {
 
 /// Test 29: Concurrent generation requests
 #[tokio::test]
-#[ignore] // Run with: cargo test --test e2e_test test_concurrent_requests -- --ignored
 async fn test_concurrent_requests() {
-    if !is_server_running(TEST_PORT).await {
-        eprintln!("Server not running. Skipping test_concurrent_requests");
+    let Some(model_path) = resolve_e2e_model_path() else {
+        eprintln!(
+            "No local model for test_concurrent_requests: set MODEL_RS_E2E_MODEL_PATH or run `model-rs download {TEST_MODEL}`."
+        );
         return;
+    };
+
+    let port = alloc_e2e_listen_port();
+    let mut server = spawn_serve_child(&model_path, port).expect("Should start server");
+    if !wait_for_health_port(port, Duration::from_secs(120)).await {
+        let _ = server.kill();
+        let _ = server.wait();
+        panic!("Server did not become healthy on port {port}");
     }
 
     let client = reqwest::Client::new();
-    let url = format!("http://localhost:{}/v1/generate", TEST_PORT);
-    
-    // Spawn multiple concurrent requests
+    let url = format!("http://127.0.0.1:{port}/v1/generate");
+
     let mut handles = vec![];
-    
     for i in 0..5 {
         let client = client.clone();
         let url = url.clone();
-        
         let handle = tokio::spawn(async move {
             client
                 .post(&url)
@@ -960,11 +959,9 @@ async fn test_concurrent_requests() {
                 .send()
                 .await
         });
-        
         handles.push(handle);
     }
 
-    // Wait for all requests to complete
     let mut successful = 0;
     for handle in handles {
         match handle.await {
@@ -975,62 +972,61 @@ async fn test_concurrent_requests() {
         }
     }
 
+    let _ = server.kill();
+    let _ = server.wait();
+
     assert!(
         successful > 0,
         "At least some concurrent requests should succeed"
     );
-    println!("✓ Concurrent requests: {}/5 successful", successful);
 }
 
-/// Test 30: Long-running generation
+/// Test 30: Longer generation request against a spawned server
 #[tokio::test]
-#[ignore] // Run with: cargo test --test e2e_test test_long_generation -- --ignored
 async fn test_long_generation() {
-    if !is_server_running(TEST_PORT).await {
-        eprintln!("Server not running. Skipping test_long_generation");
+    let Some(model_path) = resolve_e2e_model_path() else {
+        eprintln!(
+            "No local model for test_long_generation: set MODEL_RS_E2E_MODEL_PATH or run `model-rs download {TEST_MODEL}`."
+        );
         return;
+    };
+
+    let port = alloc_e2e_listen_port();
+    let mut server = spawn_serve_child(&model_path, port).expect("Should start server");
+    if !wait_for_health_port(port, Duration::from_secs(120)).await {
+        let _ = server.kill();
+        let _ = server.wait();
+        panic!("Server did not become healthy on port {port}");
     }
 
     let client = reqwest::Client::new();
-    let url = format!("http://localhost:{}/v1/generate", TEST_PORT);
-    
-    let start = std::time::Instant::now();
-    
+    let url = format!("http://127.0.0.1:{port}/v1/generate");
+
     let response = client
         .post(&url)
         .json(&serde_json::json!({
             "prompt": "Write a short story about a robot:",
-            "max_tokens": 100,
+            "max_tokens": 80,
             "temperature": 0.8
         }))
         .send()
-        .await;
+        .await
+        .expect("request should complete");
 
-    match response {
-        Ok(resp) => {
-            assert_eq!(resp.status(), 200, "Long generation should succeed");
-            
-            let body = resp.json::<serde_json::Value>().await
-                .expect("Should parse response");
-            
-            let text = body["text"].as_str().expect("Should have text");
-            let duration = start.elapsed();
-            
-            println!("✓ Long generation completed in {:?}", duration);
-            println!("Generated {} characters", text.len());
-            
-            assert!(
-                text.len() > 10,
-                "Should generate reasonable amount of text"
-            );
-        }
-        Err(e) if e.is_connect() => {
-            eprintln!("Connection failed. Server might not be running.");
-        }
-        Err(e) => {
-            panic!("Request failed: {}", e);
-        }
-    }
+    assert_eq!(response.status(), 200, "Long generation should succeed");
+
+    let body = response
+        .json::<serde_json::Value>()
+        .await
+        .expect("Should parse response");
+    let text = body["text"].as_str().expect("Should have text");
+    assert!(
+        text.len() > 10,
+        "Should generate reasonable amount of text"
+    );
+
+    let _ = server.kill();
+    let _ = server.wait();
 }
 
 /// Test 31: Verify CLI output format consistency

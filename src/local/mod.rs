@@ -492,7 +492,7 @@ impl LocalModel {
     /// Vector of generated texts, one per input prompt
     ///
     /// # Example
-    /// ```ignore
+    /// ```text
     /// // Requires a loaded `LocalModel` and an async context:
     /// let prompts = vec!["Hello", "How are you?", "Tell me a joke"];
     /// let results = model.generate_batch(prompts, 100, 0.7).await?;

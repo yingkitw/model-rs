@@ -5,7 +5,7 @@ Integration and end-to-end tests for **model-rs**.
 ## Files
 
 1. **`integration_test.rs`** — API checks against a running server at `http://127.0.0.1:$MODEL_RS_PORT` (default **8080** when the variable is unset).
-2. **`e2e_test.rs`** — CLI smoke tests and optional API tests when a server is up.
+2. **`e2e_test.rs`** — CLI smoke tests; several tests spawn `model-rs serve` themselves when a local model is available.
 
 ## Prerequisites (integration tests)
 
@@ -46,6 +46,8 @@ If the server is not running, many tests skip or no-op with a message instead of
 ## End-to-end tests (`e2e_test.rs`)
 
 These resolve the `model-rs` executable via the runtime variable **`CARGO_BIN_EXE_model_rs`** (set by Cargo for integration tests), with a fallback path under `target/` next to the package manifest—so renaming or moving the repo directory does not require a manual path override.
+
+**Model directory for tests that start a server:** set **`MODEL_RS_E2E_MODEL_PATH`** to an existing model folder, or install at least one model so `model-rs list` prints a `**Path:**` line. If neither is true, those tests print a hint and return without failing (so `cargo test` stays green on a fresh clone).
 
 ```bash
 cargo build --release
