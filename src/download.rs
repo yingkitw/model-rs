@@ -1,4 +1,5 @@
 use crate::error::{ModelError, Result};
+use crate::config::DEFAULT_MIRROR;
 use futures_util::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::Client;
@@ -8,21 +9,11 @@ use tokio::fs::{self, File};
 use tokio::io::AsyncWriteExt;
 use tracing::{info, warn};
 
-const DEFAULT_MIRROR: &str = "https://hf-mirror.com";
-
 #[derive(Debug, Deserialize)]
 struct RepoFile {
     path: String,
-    #[serde(default)]
-    size: Option<u64>,
     #[serde(rename = "type")]
     file_type: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct RepoTreeResponse {
-    #[serde(default)]
-    content: Option<Vec<RepoFile>>,
 }
 
 pub async fn download_model(

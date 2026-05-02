@@ -18,6 +18,9 @@ use candle_transformers::models::mamba::{Config as MambaConfig, Model as MambaMo
 use candle_transformers::models::mistral::{Config as MistralConfig, Model as MistralModel};
 use candle_transformers::models::phi3::{Config as Phi3Config, Model as Phi3Model};
 use candle_transformers::models::qwen2::{Config as Qwen2Config, ModelForCausalLM as Qwen2Model};
+use candle_transformers::models::qwen3::{Config as Qwen3Config, ModelForCausalLM as Qwen3Model};
+use candle_transformers::models::deepseek2::{DeepSeekV2Config, DeepSeekV2};
+use candle_transformers::models::glm4_new::{Config as Glm4Config, ModelForCausalLM as Glm4Model};
 use std::fs;
 use std::path::Path;
 use std::time::Instant;
@@ -68,6 +71,24 @@ pub enum LocalBackend {
     Qwen2 {
         model: Qwen2Model,
         config: Qwen2Config,
+    },
+
+    /// Qwen3 model with configuration
+    Qwen3 {
+        model: Qwen3Model,
+        config: Qwen3Config,
+    },
+
+    /// DeepSeek V2/V3 model with configuration
+    DeepSeek2 {
+        model: DeepSeekV2,
+        config: DeepSeekV2Config,
+    },
+
+    /// GLM-4 model with configuration
+    Glm4 {
+        model: Glm4Model,
+        config: Glm4Config,
     },
 
     /// GGUF quantized model backend (feature-gated)
@@ -490,6 +511,120 @@ impl LocalBackend {
         Ok(Some(LocalBackend::Qwen2 {
             model,
             config: qwen2_cfg,
+        }))
+    }
+
+    pub fn load_qwen3(config: &LocalModelConfig, device: &Device) -> Result<Option<Self>> {
+        info!("Loading Qwen3 model weights...");
+
+        let config_path = config.model_path.join("config.json");
+        if !config_path.exists() {
+            return Err(ModelError::LocalModelError(format!(
+                "config.json not found in {}\n\nHint: Ensure the model directory contains all required files.\nUse 'model-rs download <model>' to re-download the model.",
+                config.model_path.display()
+            )));
+        }
+
+        let config_content = fs::read_to_string(&config_path)?;
+        let qwen3_cfg: Qwen3Config = serde_json::from_str(&config_content)
+            .map_err(|e| ModelError::LocalModelError(format!("Failed to parse config: {}", e)))?;
+
+        let weight_files = find_weight_files(&config.model_path)?;
+        if weight_files.is_empty() {
+            warn!("No .safetensors files found");
+            return Ok(None);
+        }
+
+        info!("Loading {} weight file(s)...", weight_files.len());
+        let vb = unsafe {
+            VarBuilder::from_mmaped_safetensors(&weight_files, DType::F32, device).map_err(|e| {
+                ModelError::LocalModelError(format!("Failed to load weights: {}", e))
+            })?
+        };
+
+        let model = Qwen3Model::new(&qwen3_cfg, vb)
+            .map_err(|e| ModelError::LocalModelError(format!("Failed to create model: {}", e)))?;
+
+        info!("Model initialized");
+        Ok(Some(LocalBackend::Qwen3 {
+            model,
+            config: qwen3_cfg,
+        }))
+    }
+
+    pub fn load_deepseek2(config: &LocalModelConfig, device: &Device) -> Result<Option<Self>> {
+        info!("Loading DeepSeek V2/V3 model weights...");
+
+        let config_path = config.model_path.join("config.json");
+        if !config_path.exists() {
+            return Err(ModelError::LocalModelError(format!(
+                "config.json not found in {}\n\nHint: Ensure the model directory contains all required files.\nUse 'model-rs download <model>' to re-download the model.",
+                config.model_path.display()
+            )));
+        }
+
+        let config_content = fs::read_to_string(&config_path)?;
+        let deepseek_cfg: DeepSeekV2Config = serde_json::from_str(&config_content)
+            .map_err(|e| ModelError::LocalModelError(format!("Failed to parse config: {}", e)))?;
+
+        let weight_files = find_weight_files(&config.model_path)?;
+        if weight_files.is_empty() {
+            warn!("No .safetensors files found");
+            return Ok(None);
+        }
+
+        info!("Loading {} weight file(s)...", weight_files.len());
+        let vb = unsafe {
+            VarBuilder::from_mmaped_safetensors(&weight_files, DType::F32, device).map_err(|e| {
+                ModelError::LocalModelError(format!("Failed to load weights: {}", e))
+            })?
+        };
+
+        let model = DeepSeekV2::new(&deepseek_cfg, vb)
+            .map_err(|e| ModelError::LocalModelError(format!("Failed to create model: {}", e)))?;
+
+        info!("Model initialized");
+        Ok(Some(LocalBackend::DeepSeek2 {
+            model,
+            config: deepseek_cfg,
+        }))
+    }
+
+    pub fn load_glm4(config: &LocalModelConfig, device: &Device) -> Result<Option<Self>> {
+        info!("Loading GLM-4 model weights...");
+
+        let config_path = config.model_path.join("config.json");
+        if !config_path.exists() {
+            return Err(ModelError::LocalModelError(format!(
+                "config.json not found in {}\n\nHint: Ensure the model directory contains all required files.\nUse 'model-rs download <model>' to re-download the model.",
+                config.model_path.display()
+            )));
+        }
+
+        let config_content = fs::read_to_string(&config_path)?;
+        let glm4_cfg: Glm4Config = serde_json::from_str(&config_content)
+            .map_err(|e| ModelError::LocalModelError(format!("Failed to parse config: {}", e)))?;
+
+        let weight_files = find_weight_files(&config.model_path)?;
+        if weight_files.is_empty() {
+            warn!("No .safetensors files found");
+            return Ok(None);
+        }
+
+        info!("Loading {} weight file(s)...", weight_files.len());
+        let vb = unsafe {
+            VarBuilder::from_mmaped_safetensors(&weight_files, DType::F32, device).map_err(|e| {
+                ModelError::LocalModelError(format!("Failed to load weights: {}", e))
+            })?
+        };
+
+        let model = Glm4Model::new(&glm4_cfg, vb)
+            .map_err(|e| ModelError::LocalModelError(format!("Failed to create model: {}", e)))?;
+
+        info!("Model initialized");
+        Ok(Some(LocalBackend::Glm4 {
+            model,
+            config: glm4_cfg,
         }))
     }
 

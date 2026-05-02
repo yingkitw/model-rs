@@ -51,7 +51,7 @@ flowchart LR
 | `backends.rs` | Candle weights (and feature-gated GGUF / MLX) |
 | `device.rs` | `get_device`, Metal/CUDA/CPU/MLX selection |
 | `config.rs` | `LocalModelConfig`, `DevicePreference`, `ModelArchitecture` |
-| `architecture.rs` | Detect Llama, Mistral, Mamba, Phi, BERT, Granite, etc. |
+| `architecture.rs` | Detect Llama, Mistral, Mamba, Phi, BERT, Granite, Gemma, Qwen2/3, DeepSeek V2/V3, GLM-4, etc. |
 | `generation.rs` | Decode loops, streaming hooks |
 | `tokenization.rs` | Tokenizer helpers, streaming pieces |
 | `sampling.rs` | `do_sample` (temperature, top-p, top-k) |

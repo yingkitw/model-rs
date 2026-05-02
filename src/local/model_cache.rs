@@ -3,7 +3,7 @@
 //! This module provides a global model cache to avoid reloading models
 //! between requests, significantly improving performance for repeated inference.
 
-use crate::error::{ModelError, Result};
+use crate::error::Result;
 use crate::local::{LocalModel, LocalModelConfig};
 use std::collections::HashMap;
 use std::path::PathBuf;

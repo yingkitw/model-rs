@@ -1,9 +1,8 @@
 use crate::error::{ModelError, Result};
+use crate::config::DEFAULT_MIRROR;
 use reqwest::Client;
 use serde::Deserialize;
 use tracing::info;
-
-const DEFAULT_MIRROR: &str = "https://hf-mirror.com";
 
 #[derive(Debug, Deserialize)]
 struct ModelInfo {

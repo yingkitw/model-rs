@@ -72,6 +72,10 @@ pub fn detect_architecture(model_path: &Path) -> Result<ModelArchitecture> {
         "granite" => Ok(ModelArchitecture::Granite),
         "gemma" | "gemma2" | "gemma3" | "gemma4" => Ok(ModelArchitecture::Gemma),
         "qwen2" | "qwen2_moe" => Ok(ModelArchitecture::Qwen2),
+        "qwen3" | "qwen3_moe" | "qwen3_vl" => Ok(ModelArchitecture::Qwen3),
+        "deepseek_v2" | "deepseek_v3" | "deepseek" => Ok(ModelArchitecture::DeepSeek2),
+        "kimi" | "kimi_v1" => Ok(ModelArchitecture::DeepSeek2),
+        "glm4" | "glm4_new" | "chatglm" => Ok(ModelArchitecture::Glm4),
         _ => {
             warn!("Unknown model type '{}', defaulting to Llama", model_type);
             Ok(ModelArchitecture::Llama)

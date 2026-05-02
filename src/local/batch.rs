@@ -5,9 +5,7 @@
 
 use crate::error::{ModelError, Result};
 use crate::local::backends::LocalBackend;
-use crate::local::sampling::do_sample;
 use candle_core::{DType, Device, Tensor};
-use tracing::debug;
 
 /// Batch generation request
 pub struct BatchRequest {
@@ -149,6 +147,39 @@ where
                 device,
                 sample_fn,
             )?,
+            LocalBackend::Qwen3 { model, .. } => generate_qwen3_single(
+                model,
+                &request.input_ids,
+                request.max_tokens,
+                request.temperature,
+                0.9,
+                None,
+                request.eos_token,
+                device,
+                sample_fn,
+            )?,
+            LocalBackend::DeepSeek2 { model, .. } => generate_deepseek2_single(
+                model,
+                &request.input_ids,
+                request.max_tokens,
+                request.temperature,
+                0.9,
+                None,
+                request.eos_token,
+                device,
+                sample_fn,
+            )?,
+            LocalBackend::Glm4 { model, .. } => generate_glm4_single(
+                model,
+                &request.input_ids,
+                request.max_tokens,
+                request.temperature,
+                0.9,
+                None,
+                request.eos_token,
+                device,
+                sample_fn,
+            )?,
             LocalBackend::Bert { .. } => {
                 return Err(ModelError::LocalModelError(
                     "Encoder-only models (BERT) cannot generate text. Use embeddings instead."
@@ -159,6 +190,12 @@ where
             LocalBackend::Gguf { .. } => {
                 return Err(ModelError::LocalModelError(
                     "GGUF batch generation not yet supported.".to_string(),
+                ));
+            }
+            #[cfg(feature = "mlx")]
+            LocalBackend::Mlx { .. } => {
+                return Err(ModelError::LocalModelError(
+                    "MLX batch generation not yet supported.".to_string(),
                 ));
             }
         };
@@ -283,6 +320,39 @@ where
                 device,
                 sample_fn,
             )?,
+            LocalBackend::Qwen3 { model, .. } => generate_qwen3_single(
+                model,
+                &request.input_ids,
+                request.max_tokens,
+                request.temperature,
+                0.9,
+                None,
+                request.eos_token,
+                device,
+                sample_fn,
+            )?,
+            LocalBackend::DeepSeek2 { model, .. } => generate_deepseek2_single(
+                model,
+                &request.input_ids,
+                request.max_tokens,
+                request.temperature,
+                0.9,
+                None,
+                request.eos_token,
+                device,
+                sample_fn,
+            )?,
+            LocalBackend::Glm4 { model, .. } => generate_glm4_single(
+                model,
+                &request.input_ids,
+                request.max_tokens,
+                request.temperature,
+                0.9,
+                None,
+                request.eos_token,
+                device,
+                sample_fn,
+            )?,
             LocalBackend::Bert { .. } => {
                 return Err(ModelError::LocalModelError(
                     "Encoder-only models (BERT) cannot generate text. Use embeddings instead."
@@ -293,6 +363,12 @@ where
             LocalBackend::Gguf { .. } => {
                 return Err(ModelError::LocalModelError(
                     "GGUF batch generation not yet supported.".to_string(),
+                ));
+            }
+            #[cfg(feature = "mlx")]
+            LocalBackend::Mlx { .. } => {
+                return Err(ModelError::LocalModelError(
+                    "MLX batch generation not yet supported.".to_string(),
                 ));
             }
         };
@@ -597,6 +673,135 @@ where
 
 fn generate_qwen2_single<F>(
     model: &mut candle_transformers::models::qwen2::ModelForCausalLM,
+    input_ids: &[u32],
+    max_tokens: usize,
+    temperature: f32,
+    top_p: f32,
+    top_k: Option<usize>,
+    eos_token: Option<u32>,
+    device: &Device,
+    sample_fn: F,
+) -> Result<Vec<u32>>
+where
+    F: Fn(&[f32], f32, f32, Option<usize>) -> Result<u32>,
+{
+    model.clear_kv_cache();
+
+    let prompt_tensor = Tensor::new(input_ids, device)?.unsqueeze(0)?;
+    let logits = model.forward(&prompt_tensor, 0)?;
+    let logits_vec = logits.to_dtype(DType::F32)?.to_vec3::<f32>()?;
+    let token_logits = &logits_vec[0][0];
+
+    let mut next = sample_fn(token_logits, temperature, top_p, top_k)?;
+    let mut generated = vec![next];
+
+    for idx in 1..max_tokens {
+        if let Some(eos) = eos_token {
+            if next == eos {
+                break;
+            }
+        }
+
+        let tensor = Tensor::new(&[next], device)?.unsqueeze(0)?;
+        let logits = model.forward(&tensor, input_ids.len() + idx - 1)?;
+        let logits_vec = logits.to_dtype(DType::F32)?.to_vec3::<f32>()?;
+        let token_logits = &logits_vec[0][0];
+
+        next = sample_fn(token_logits, temperature, top_p, top_k)?;
+        generated.push(next);
+    }
+
+    Ok(generated)
+}
+
+fn generate_qwen3_single<F>(
+    model: &mut candle_transformers::models::qwen3::ModelForCausalLM,
+    input_ids: &[u32],
+    max_tokens: usize,
+    temperature: f32,
+    top_p: f32,
+    top_k: Option<usize>,
+    eos_token: Option<u32>,
+    device: &Device,
+    sample_fn: F,
+) -> Result<Vec<u32>>
+where
+    F: Fn(&[f32], f32, f32, Option<usize>) -> Result<u32>,
+{
+    model.clear_kv_cache();
+
+    let prompt_tensor = Tensor::new(input_ids, device)?.unsqueeze(0)?;
+    let logits = model.forward(&prompt_tensor, 0)?;
+    let logits_vec = logits.to_dtype(DType::F32)?.to_vec3::<f32>()?;
+    let token_logits = &logits_vec[0][0];
+
+    let mut next = sample_fn(token_logits, temperature, top_p, top_k)?;
+    let mut generated = vec![next];
+
+    for idx in 1..max_tokens {
+        if let Some(eos) = eos_token {
+            if next == eos {
+                break;
+            }
+        }
+
+        let tensor = Tensor::new(&[next], device)?.unsqueeze(0)?;
+        let logits = model.forward(&tensor, input_ids.len() + idx - 1)?;
+        let logits_vec = logits.to_dtype(DType::F32)?.to_vec3::<f32>()?;
+        let token_logits = &logits_vec[0][0];
+
+        next = sample_fn(token_logits, temperature, top_p, top_k)?;
+        generated.push(next);
+    }
+
+    Ok(generated)
+}
+
+fn generate_deepseek2_single<F>(
+    model: &mut candle_transformers::models::deepseek2::DeepSeekV2,
+    input_ids: &[u32],
+    max_tokens: usize,
+    temperature: f32,
+    top_p: f32,
+    top_k: Option<usize>,
+    eos_token: Option<u32>,
+    device: &Device,
+    sample_fn: F,
+) -> Result<Vec<u32>>
+where
+    F: Fn(&[f32], f32, f32, Option<usize>) -> Result<u32>,
+{
+    model.clear_kv_cache();
+
+    let prompt_tensor = Tensor::new(input_ids, device)?.unsqueeze(0)?;
+    let logits = model.forward(&prompt_tensor, 0)?;
+    let logits_vec = logits.to_dtype(DType::F32)?.to_vec2::<f32>()?;
+    let token_logits = &logits_vec[0];
+
+    let mut next = sample_fn(token_logits, temperature, top_p, top_k)?;
+    let mut generated = vec![next];
+
+    for idx in 1..max_tokens {
+        if let Some(eos) = eos_token {
+            if next == eos {
+                break;
+            }
+        }
+
+        let tensor = Tensor::new(&[next], device)?.unsqueeze(0)?;
+        let logits = model.forward(&tensor, input_ids.len() + idx - 1)?;
+        let logits_vec = logits.to_dtype(DType::F32)?.to_vec2::<f32>()?;
+        let token_logits = &logits_vec[0];
+
+        next = sample_fn(token_logits, temperature, top_p, top_k)?;
+        generated.push(next);
+    }
+
+    Ok(generated)
+}
+
+fn generate_glm4_single<F>(
+    model: &mut candle_transformers::models::glm4_new::ModelForCausalLM,
     input_ids: &[u32],
     max_tokens: usize,
     temperature: f32,

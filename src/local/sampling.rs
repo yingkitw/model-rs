@@ -1,5 +1,5 @@
-use crate::error::{ModelError, Result};
-use std::time::{SystemTime, UNIX_EPOCH};
+use crate::error::Result;
+use rand::Rng;
 
 pub fn do_sample(
     logits: &[f32],
@@ -71,12 +71,7 @@ pub fn do_sample(
         }
     }
 
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|e| ModelError::LocalModelError(format!("Failed to get time: {}", e)))?
-        .as_nanos() as f32;
-
-    let random_value = (nanos % 1000000.0) / 1000000.0;
+    let random_value: f32 = rand::thread_rng().r#gen();
     let mut cumulative = 0.0;
 
     for (idx, &prob) in probs.iter().enumerate() {

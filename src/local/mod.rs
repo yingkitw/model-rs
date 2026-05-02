@@ -5,7 +5,7 @@
 
 use crate::error::{ModelError, Result};
 use tokenizers::Tokenizer;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use tracing::{debug, info, warn};
@@ -128,6 +128,9 @@ impl LocalModel {
                 ModelArchitecture::Phi => LocalBackend::load_phi3(&config, &device)?,
                 ModelArchitecture::Gemma => LocalBackend::load_gemma(&config, &device)?,
                 ModelArchitecture::Qwen2 => LocalBackend::load_qwen2(&config, &device)?,
+                ModelArchitecture::Qwen3 => LocalBackend::load_qwen3(&config, &device)?,
+                ModelArchitecture::DeepSeek2 => LocalBackend::load_deepseek2(&config, &device)?,
+                ModelArchitecture::Glm4 => LocalBackend::load_glm4(&config, &device)?,
                 _ => {
                     warn!("Architecture {:?} not yet fully implemented", architecture);
                     None
@@ -189,7 +192,38 @@ impl LocalModel {
         Ok(ids)
     }
 
-    /// Load tokenizer from the model directory
+    fn decode_tokens(&self, token_ids: &[u32]) -> Result<String> {
+        let mut result = String::new();
+        let mut skipped_special = 0;
+
+        for (i, &token_id) in token_ids.iter().enumerate() {
+            let raw_token = self.tokenizer.id_to_token(token_id);
+
+            if let Some(ref token) = raw_token {
+                if token == "</s>" || token == "<s>" || token == "<unk>" {
+                    skipped_special += 1;
+                    continue;
+                }
+            }
+
+            let token_str = self.tokenizer.decode(&[token_id], false)
+                .map_err(|e| ModelError::LocalModelError(format!("Token decode failed: {}", e)))?;
+
+            if let Some(raw) = raw_token {
+                if raw.starts_with('▁') {
+                    let actual_index = i - skipped_special;
+                    if actual_index > 0 && !result.is_empty() {
+                        result.push(' ');
+                    }
+                }
+            }
+
+            result.push_str(&token_str);
+        }
+
+        Ok(result.trim().to_string())
+    }
+
     fn load_tokenizer(model_path: &Path) -> Result<Tokenizer> {
         let tokenizer_files = ["tokenizer.json", "tokenizer_config.json"];
         let tokenizer_path = tokenizer_files.iter()
@@ -252,36 +286,7 @@ impl LocalModel {
             )?,
         };
 
-        // Decode tokens with proper spacing
-        let mut result = String::new();
-        let mut skipped_special = 0;
-
-        for (i, &token_id) in generated.iter().enumerate() {
-            let raw_token = self.tokenizer.id_to_token(token_id);
-
-            if let Some(ref token) = raw_token {
-                if token == "</s>" || token == "<s>" || token == "<unk>" {
-                    skipped_special += 1;
-                    continue;
-                }
-            }
-
-            let token_str = self.tokenizer.decode(&[token_id], false)
-                .map_err(|e| ModelError::LocalModelError(format!("Token decode failed: {}", e)))?;
-
-            if let Some(raw) = raw_token {
-                if raw.starts_with('▁') {
-                    let actual_index = i - skipped_special;
-                    if actual_index > 0 && !result.is_empty() {
-                        result.push(' ');
-                    }
-                }
-            }
-
-            result.push_str(&token_str);
-        }
-
-        Ok(result.trim().to_string())
+        self.decode_tokens(&generated)
     }
 
     fn generate_llama_with_session_kv(
@@ -405,7 +410,7 @@ impl LocalModel {
     }
 
     /// Generate text with streaming callback
-    pub async fn generate_stream_with<F>(&mut self, prompt: &str, max_tokens: usize, temp: f32, mut emit: F) -> Result<()>
+    pub async fn generate_stream_with<F>(&mut self, prompt: &str, max_tokens: usize, temp: f32, emit: F) -> Result<()>
     where
         F: FnMut(String) -> Result<()>,
     {
@@ -526,38 +531,9 @@ impl LocalModel {
 
         let batch_results = generate_batch(backend, batch_requests, &self.device, do_sample)?;
 
-        // Decode all results
         let mut results = Vec::new();
         for batch_result in batch_results {
-            let mut text = String::new();
-            let mut skipped_special = 0;
-
-            for (i, &token_id) in batch_result.tokens.iter().enumerate() {
-                let raw_token = self.tokenizer.id_to_token(token_id);
-
-                if let Some(ref token) = raw_token {
-                    if token == "</s>" || token == "<s>" || token == "<unk>" {
-                        skipped_special += 1;
-                        continue;
-                    }
-                }
-
-                let token_str = self.tokenizer.decode(&[token_id], false)
-                    .map_err(|e| ModelError::LocalModelError(format!("Token decode failed: {}", e)))?;
-
-                if let Some(raw) = raw_token {
-                    if raw.starts_with('▁') {
-                        let actual_index = i - skipped_special;
-                        if actual_index > 0 && !text.is_empty() {
-                            text.push(' ');
-                        }
-                    }
-                }
-
-                text.push_str(&token_str);
-            }
-
-            results.push(text.trim().to_string());
+            results.push(self.decode_tokens(&batch_result.tokens)?);
         }
 
         Ok(results)
@@ -631,6 +607,7 @@ pub async fn load_model_from_path(path: &Path) -> Result<LocalModel> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn test_architecture() {
@@ -789,6 +766,50 @@ mod tests {
         ).unwrap();
         let err = detect_architecture(tmp.path()).unwrap_err();
         assert!(err.to_string().to_lowercase().contains("moe"));
+    }
+
+    #[test]
+    fn test_detect_architecture_qwen3() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("config.json"),
+            r#"{"model_type":"qwen3"}"#,
+        ).unwrap();
+        let arch = detect_architecture(tmp.path()).unwrap();
+        assert!(matches!(arch, ModelArchitecture::Qwen3));
+    }
+
+    #[test]
+    fn test_detect_architecture_deepseek() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("config.json"),
+            r#"{"model_type":"deepseek_v2"}"#,
+        ).unwrap();
+        let arch = detect_architecture(tmp.path()).unwrap();
+        assert!(matches!(arch, ModelArchitecture::DeepSeek2));
+    }
+
+    #[test]
+    fn test_detect_architecture_kimi() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("config.json"),
+            r#"{"model_type":"kimi"}"#,
+        ).unwrap();
+        let arch = detect_architecture(tmp.path()).unwrap();
+        assert!(matches!(arch, ModelArchitecture::DeepSeek2));
+    }
+
+    #[test]
+    fn test_detect_architecture_glm4() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("config.json"),
+            r#"{"model_type":"glm4"}"#,
+        ).unwrap();
+        let arch = detect_architecture(tmp.path()).unwrap();
+        assert!(matches!(arch, ModelArchitecture::Glm4));
     }
 
     #[cfg(feature = "gguf")]

@@ -12,7 +12,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
     response::sse::{Event, Sse},
-    routing::{delete, get, post},
+    routing::{get, post},
     Json, Router,
 };
 use axum::body::Body;

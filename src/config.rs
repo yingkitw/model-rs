@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+pub const DEFAULT_MIRROR: &str = "https://hf-mirror.com";
+
 /// Helper functions to read configuration from environment variables with fallbacks
 pub fn get_model_path() -> Option<PathBuf> {
     std::env::var("MODEL_RS_MODEL_PATH").ok().map(PathBuf::from)
@@ -58,7 +60,7 @@ pub fn get_port() -> u16 {
 }
 
 pub fn get_mirror() -> String {
-    std::env::var("MODEL_RS_MIRROR").unwrap_or_else(|_| "https://hf-mirror.com".to_string())
+    std::env::var("MODEL_RS_MIRROR").unwrap_or_else(|_| DEFAULT_MIRROR.to_string())
 }
 
 pub fn get_output_dir() -> Option<PathBuf> {

@@ -386,59 +386,18 @@ pub async fn generate(
     let mut code_hi: Option<crate::output::CodeHighlighter<'_>> = None;
     let mut code_open = false;
 
-    local_model.generate_stream_with(&effective_prompt, max_tokens, temperature, |piece| {
-        if should_stop.load(Ordering::Relaxed) {
-            return Ok(());
-        }
-
-        // Check if this piece or the cumulative buffer contains "User:" indicating a new turn
-        if piece.contains("\nUser:") || piece.contains("\n\nUser:") {
-            should_stop.store(true, Ordering::Relaxed);
-            return Ok(());
-        }
-
-        stream_md.push_with(
-            &piece,
+    macro_rules! on_text {
+        () => {
             |text| {
                 print!("{}", text);
                 let _ = io::stdout().flush();
-            },
-            |ev| {
-                match ev {
-                    crate::output::CodeStreamEvent::Start { language } => {
-                        if !code_open {
-                            println!();
-                            code_open = true;
-                        }
-                        code_hi = Some(formatter.code_highlighter(language));
-                    }
-                    crate::output::CodeStreamEvent::Chunk { language: _, code } => {
-                        if let Some(h) = code_hi.as_mut() {
-                            h.write(code);
-                        }
-                    }
-                    crate::output::CodeStreamEvent::End => {
-                        if let Some(h) = code_hi.as_mut() {
-                            h.finish_line();
-                        }
-                        code_hi = None;
-                        code_open = false;
-                        println!();
-                    }
-                }
-            },
-        );
+            }
+        };
+    }
 
-        Ok(())
-    }).await?;
-
-    stream_md.finish_with(
-        |text| {
-            print!("{}", text);
-            let _ = io::stdout().flush();
-        },
-        |ev| {
-            match ev {
+    macro_rules! on_code_event {
+        () => {
+            |ev| match ev {
                 crate::output::CodeStreamEvent::Start { language } => {
                     if !code_open {
                         println!();
@@ -460,8 +419,25 @@ pub async fn generate(
                     println!();
                 }
             }
-        },
-    );
+        };
+    }
+
+    local_model.generate_stream_with(&effective_prompt, max_tokens, temperature, |piece| {
+        if should_stop.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+
+        if piece.contains("\nUser:") || piece.contains("\n\nUser:") {
+            should_stop.store(true, Ordering::Relaxed);
+            return Ok(());
+        }
+
+        stream_md.push_with(&piece, on_text!(), on_code_event!());
+
+        Ok(())
+    }).await?;
+
+    stream_md.finish_with(on_text!(), on_code_event!());
 
     println!();
     

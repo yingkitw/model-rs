@@ -14,6 +14,9 @@ pub enum ModelArchitecture {
     Granite,
     Gemma,
     Qwen2,
+    Qwen3,
+    DeepSeek2,
+    Glm4,
     Mlx,
 }
 

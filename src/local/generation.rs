@@ -114,6 +114,39 @@ where
             device,
             &sample_fn,
         ),
+        LocalBackend::Qwen3 { model, .. } => generate_qwen3(
+            model,
+            input_ids,
+            max_tokens,
+            temperature,
+            top_p,
+            top_k,
+            eos_token,
+            device,
+            &sample_fn,
+        ),
+        LocalBackend::DeepSeek2 { model, .. } => generate_deepseek2(
+            model,
+            input_ids,
+            max_tokens,
+            temperature,
+            top_p,
+            top_k,
+            eos_token,
+            device,
+            &sample_fn,
+        ),
+        LocalBackend::Glm4 { model, .. } => generate_glm4(
+            model,
+            input_ids,
+            max_tokens,
+            temperature,
+            top_p,
+            top_k,
+            eos_token,
+            device,
+            &sample_fn,
+        ),
         #[cfg(feature = "gguf")]
         LocalBackend::Gguf { backend } => generate_gguf(
             backend,
@@ -187,6 +220,18 @@ where
             &sample_fn, emit,
         ),
         LocalBackend::Qwen2 { model, .. } => stream_qwen2(
+            model, tokenizer, input_ids, max_tokens, temp, top_p, top_k, eos_token, device,
+            &sample_fn, emit,
+        ),
+        LocalBackend::Qwen3 { model, .. } => stream_qwen3(
+            model, tokenizer, input_ids, max_tokens, temp, top_p, top_k, eos_token, device,
+            &sample_fn, emit,
+        ),
+        LocalBackend::DeepSeek2 { model, .. } => stream_deepseek2(
+            model, tokenizer, input_ids, max_tokens, temp, top_p, top_k, eos_token, device,
+            &sample_fn, emit,
+        ),
+        LocalBackend::Glm4 { model, .. } => stream_glm4(
             model, tokenizer, input_ids, max_tokens, temp, top_p, top_k, eos_token, device,
             &sample_fn, emit,
         ),
@@ -959,6 +1004,303 @@ where
 
 fn stream_qwen2<F, C>(
     model: &mut candle_transformers::models::qwen2::ModelForCausalLM,
+    tokenizer: &tokenizers::Tokenizer,
+    input_ids: &[u32],
+    max_tokens: usize,
+    temp: f32,
+    top_p: f32,
+    top_k: Option<usize>,
+    eos_token: Option<u32>,
+    device: &Device,
+    sample_fn: &C,
+    mut emit: F,
+) -> Result<()>
+where
+    F: FnMut(String) -> Result<()>,
+    C: Fn(&[f32], f32, f32, Option<usize>) -> Result<u32>,
+{
+    model.clear_kv_cache();
+
+    let mut started = false;
+
+    let prompt_tensor = Tensor::new(&input_ids[..], device)?.unsqueeze(0)?;
+    let logits = model.forward(&prompt_tensor, 0)?;
+    let logits_vec = logits.to_dtype(DType::F32)?.to_vec3::<f32>()?;
+    let last_logits = &logits_vec[0][0];
+
+    let mut next = sample_fn(last_logits, temp, top_p, top_k)?;
+    if let Some(piece) = stream_piece(tokenizer, next, &mut started)? {
+        emit(piece)?;
+    }
+
+    for idx in 1..max_tokens {
+        if let Some(eos) = eos_token {
+            if next == eos {
+                break;
+            }
+        }
+
+        let tensor = Tensor::new(&[next], device)?.unsqueeze(0)?;
+        let logits = model.forward(&tensor, input_ids.len() + idx - 1)?;
+        let logits_vec = logits.to_dtype(DType::F32)?.to_vec3::<f32>()?;
+        let token_logits = &logits_vec[0][0];
+
+        next = sample_fn(token_logits, temp, top_p, top_k)?;
+        if let Some(piece) = stream_piece(tokenizer, next, &mut started)? {
+            emit(piece)?;
+        }
+    }
+
+    Ok(())
+}
+
+// ============================================================================
+// Qwen3 Generation
+// ============================================================================
+
+fn generate_qwen3<F>(
+    model: &mut candle_transformers::models::qwen3::ModelForCausalLM,
+    input_ids: &[u32],
+    max_tokens: usize,
+    temperature: f32,
+    top_p: f32,
+    top_k: Option<usize>,
+    eos_token: Option<u32>,
+    device: &Device,
+    sample_fn: &F,
+) -> Result<GenerationResult>
+where
+    F: Fn(&[f32], f32, f32, Option<usize>) -> Result<u32>,
+{
+    model.clear_kv_cache();
+
+    let prompt_tensor = Tensor::new(&input_ids[..], device)?.unsqueeze(0)?;
+    let logits = model.forward(&prompt_tensor, 0)?;
+    let logits_vec = logits.to_dtype(DType::F32)?.to_vec3::<f32>()?;
+    let last_logits = &logits_vec[0][0];
+
+    let mut next = sample_fn(last_logits, temperature, top_p, top_k)?;
+    let mut generated = vec![next];
+
+    for idx in 1..max_tokens {
+        if let Some(eos) = eos_token {
+            if next == eos {
+                break;
+            }
+        }
+
+        let tensor = Tensor::new(&[next], device)?.unsqueeze(0)?;
+        let logits = model.forward(&tensor, input_ids.len() + idx - 1)?;
+        let logits_vec = logits.to_dtype(DType::F32)?.to_vec3::<f32>()?;
+        let token_logits = &logits_vec[0][0];
+
+        next = sample_fn(token_logits, temperature, top_p, top_k)?;
+        generated.push(next);
+    }
+
+    Ok(generated)
+}
+
+fn stream_qwen3<F, C>(
+    model: &mut candle_transformers::models::qwen3::ModelForCausalLM,
+    tokenizer: &tokenizers::Tokenizer,
+    input_ids: &[u32],
+    max_tokens: usize,
+    temp: f32,
+    top_p: f32,
+    top_k: Option<usize>,
+    eos_token: Option<u32>,
+    device: &Device,
+    sample_fn: &C,
+    mut emit: F,
+) -> Result<()>
+where
+    F: FnMut(String) -> Result<()>,
+    C: Fn(&[f32], f32, f32, Option<usize>) -> Result<u32>,
+{
+    model.clear_kv_cache();
+
+    let mut started = false;
+
+    let prompt_tensor = Tensor::new(&input_ids[..], device)?.unsqueeze(0)?;
+    let logits = model.forward(&prompt_tensor, 0)?;
+    let logits_vec = logits.to_dtype(DType::F32)?.to_vec3::<f32>()?;
+    let last_logits = &logits_vec[0][0];
+
+    let mut next = sample_fn(last_logits, temp, top_p, top_k)?;
+    if let Some(piece) = stream_piece(tokenizer, next, &mut started)? {
+        emit(piece)?;
+    }
+
+    for idx in 1..max_tokens {
+        if let Some(eos) = eos_token {
+            if next == eos {
+                break;
+            }
+        }
+
+        let tensor = Tensor::new(&[next], device)?.unsqueeze(0)?;
+        let logits = model.forward(&tensor, input_ids.len() + idx - 1)?;
+        let logits_vec = logits.to_dtype(DType::F32)?.to_vec3::<f32>()?;
+        let token_logits = &logits_vec[0][0];
+
+        next = sample_fn(token_logits, temp, top_p, top_k)?;
+        if let Some(piece) = stream_piece(tokenizer, next, &mut started)? {
+            emit(piece)?;
+        }
+    }
+
+    Ok(())
+}
+
+// ============================================================================
+// DeepSeek2 Generation
+// ============================================================================
+
+fn generate_deepseek2<F>(
+    model: &mut candle_transformers::models::deepseek2::DeepSeekV2,
+    input_ids: &[u32],
+    max_tokens: usize,
+    temperature: f32,
+    top_p: f32,
+    top_k: Option<usize>,
+    eos_token: Option<u32>,
+    device: &Device,
+    sample_fn: &F,
+) -> Result<GenerationResult>
+where
+    F: Fn(&[f32], f32, f32, Option<usize>) -> Result<u32>,
+{
+    model.clear_kv_cache();
+
+    let prompt_tensor = Tensor::new(&input_ids[..], device)?.unsqueeze(0)?;
+    let logits = model.forward(&prompt_tensor, 0)?;
+    let logits_vec = logits.to_dtype(DType::F32)?.to_vec2::<f32>()?;
+    let last_logits = &logits_vec[0];
+
+    let mut next = sample_fn(last_logits, temperature, top_p, top_k)?;
+    let mut generated = vec![next];
+
+    for idx in 1..max_tokens {
+        if let Some(eos) = eos_token {
+            if next == eos {
+                break;
+            }
+        }
+
+        let tensor = Tensor::new(&[next], device)?.unsqueeze(0)?;
+        let logits = model.forward(&tensor, input_ids.len() + idx - 1)?;
+        let logits_vec = logits.to_dtype(DType::F32)?.to_vec2::<f32>()?;
+        let token_logits = &logits_vec[0];
+
+        next = sample_fn(token_logits, temperature, top_p, top_k)?;
+        generated.push(next);
+    }
+
+    Ok(generated)
+}
+
+fn stream_deepseek2<F, C>(
+    model: &mut candle_transformers::models::deepseek2::DeepSeekV2,
+    tokenizer: &tokenizers::Tokenizer,
+    input_ids: &[u32],
+    max_tokens: usize,
+    temp: f32,
+    top_p: f32,
+    top_k: Option<usize>,
+    eos_token: Option<u32>,
+    device: &Device,
+    sample_fn: &C,
+    mut emit: F,
+) -> Result<()>
+where
+    F: FnMut(String) -> Result<()>,
+    C: Fn(&[f32], f32, f32, Option<usize>) -> Result<u32>,
+{
+    model.clear_kv_cache();
+
+    let mut started = false;
+
+    let prompt_tensor = Tensor::new(&input_ids[..], device)?.unsqueeze(0)?;
+    let logits = model.forward(&prompt_tensor, 0)?;
+    let logits_vec = logits.to_dtype(DType::F32)?.to_vec2::<f32>()?;
+    let last_logits = &logits_vec[0];
+
+    let mut next = sample_fn(last_logits, temp, top_p, top_k)?;
+    if let Some(piece) = stream_piece(tokenizer, next, &mut started)? {
+        emit(piece)?;
+    }
+
+    for idx in 1..max_tokens {
+        if let Some(eos) = eos_token {
+            if next == eos {
+                break;
+            }
+        }
+
+        let tensor = Tensor::new(&[next], device)?.unsqueeze(0)?;
+        let logits = model.forward(&tensor, input_ids.len() + idx - 1)?;
+        let logits_vec = logits.to_dtype(DType::F32)?.to_vec2::<f32>()?;
+        let token_logits = &logits_vec[0];
+
+        next = sample_fn(token_logits, temp, top_p, top_k)?;
+        if let Some(piece) = stream_piece(tokenizer, next, &mut started)? {
+            emit(piece)?;
+        }
+    }
+
+    Ok(())
+}
+
+// ============================================================================
+// Glm4 Generation
+// ============================================================================
+
+fn generate_glm4<F>(
+    model: &mut candle_transformers::models::glm4_new::ModelForCausalLM,
+    input_ids: &[u32],
+    max_tokens: usize,
+    temperature: f32,
+    top_p: f32,
+    top_k: Option<usize>,
+    eos_token: Option<u32>,
+    device: &Device,
+    sample_fn: &F,
+) -> Result<GenerationResult>
+where
+    F: Fn(&[f32], f32, f32, Option<usize>) -> Result<u32>,
+{
+    model.clear_kv_cache();
+
+    let prompt_tensor = Tensor::new(&input_ids[..], device)?.unsqueeze(0)?;
+    let logits = model.forward(&prompt_tensor, 0)?;
+    let logits_vec = logits.to_dtype(DType::F32)?.to_vec3::<f32>()?;
+    let last_logits = &logits_vec[0][0];
+
+    let mut next = sample_fn(last_logits, temperature, top_p, top_k)?;
+    let mut generated = vec![next];
+
+    for idx in 1..max_tokens {
+        if let Some(eos) = eos_token {
+            if next == eos {
+                break;
+            }
+        }
+
+        let tensor = Tensor::new(&[next], device)?.unsqueeze(0)?;
+        let logits = model.forward(&tensor, input_ids.len() + idx - 1)?;
+        let logits_vec = logits.to_dtype(DType::F32)?.to_vec3::<f32>()?;
+        let token_logits = &logits_vec[0][0];
+
+        next = sample_fn(token_logits, temperature, top_p, top_k)?;
+        generated.push(next);
+    }
+
+    Ok(generated)
+}
+
+fn stream_glm4<F, C>(
+    model: &mut candle_transformers::models::glm4_new::ModelForCausalLM,
     tokenizer: &tokenizers::Tokenizer,
     input_ids: &[u32],
     max_tokens: usize,
