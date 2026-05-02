@@ -71,4 +71,5 @@ Integration tests use **`MODEL_RS_PORT`** (default **8080** when unset) to reach
 
 - Rust edition **2024**.
 - **Device** strings: `auto`, `cpu`, `metal`, `cuda`, `mlx` (`DevicePreference` in `src/local/config.rs`).
+- **Model architectures** are auto-detected from `config.json` (`model_type`). Candle-based families: Llama, Mistral, Phi, Gemma, Qwen2/3, DeepSeek V2/V3, Kimi (DeepSeek-based), GLM-4, Mamba, BERT, Granite. Optional GGUF and MLX backends via Cargo features.
 - API payloads aim to match common OpenAI/Ollama client expectations where routes exist; refer to `src/influencer/server.rs` for authoritative request/response types.

@@ -9,6 +9,30 @@ Rust **CLI** and **library** for downloading Hugging Face models, running **loca
 - **HTTP API** — `serve` (and `deploy`, same server) bind an Axum app: `/v1/*` generation + SSE, `/api/*` Ollama-style generate, chat, tags, embeddings, pull, copy, delete, etc. See **HTTP API** below.
 - **Model housekeeping** — `list`, `show`, `info`, `verify`, `copy`, `remove`, `ps`, `stop`, plus `cache` for the in-process model cache (stats, clear, preload, evict).
 
+## Supported models
+
+`model-rs` auto-detects the architecture from `config.json` (`model_type`). Supported families (Candle-based):
+
+| Family | Detected `model_type` values | Example models |
+|--------|------------------------------|----------------|
+| **Llama** (Llama 2/3, TinyLlama, etc.) | `llama` | `TinyLlama/TinyLlama-1.1B-Chat-v1.0` |
+| **Mistral** | `mistral` | Mistral 7B, Mixtral |
+| **Phi** (Phi-3/4) | `phi` | `microsoft/Phi-3-mini-4k-instruct` |
+| **Gemma** (Gemma 2/3/4) | `gemma`, `gemma2`, `gemma3`, `gemma4` | `google/gemma-2-2b-it` |
+| **Qwen2** | `qwen2`, `qwen2_moe` | `Qwen/Qwen2-7B-Instruct` |
+| **Qwen3** | `qwen3`, `qwen3_moe`, `qwen3_vl` | `Qwen/Qwen3-8B` |
+| **DeepSeek V2/V3** | `deepseek_v2`, `deepseek_v3`, `deepseek` | `deepseek-ai/DeepSeek-V3` |
+| **Kimi** (K2.5, etc.) | `kimi`, `kimi_v1` | `moonshotai/Kimi-K2.5` |
+| **GLM-4** | `glm4`, `glm4_new`, `chatglm` | `THUDM/glm-4-9b-chat` |
+| **Mamba** | `mamba` | State-space models |
+| **BERT** (encoder-only) | `bert`, `roberta`, `albert` | Embeddings |
+| **Granite** | `granite` | IBM Granite |
+| **GraniteMoeHybrid** | `granitemoehybrid` | Attention-only hybrids |
+
+Additional backends:
+- **GGUF** — enable with `--features gguf` for quantized models.
+- **MLX** — enable with `--features mlx` for Apple Silicon GPU acceleration.
+
 ## Compared to Ollama, vLLM, and SGLang
 
 These projects overlap on “run an LLM and talk to it over HTTP,” but they optimize for different stacks and scales. **model-rs** is a **Rust** crate and binary built around **Candle**, Hugging Face–style downloads, and a **subset** of **Ollama-compatible** routes so existing clients can often be pointed here for local experiments—not a drop-in replacement for any of them.
