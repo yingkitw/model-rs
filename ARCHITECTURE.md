@@ -92,7 +92,7 @@ flowchart LR
 
 ## Features
 
-Only one optional feature remains in `Cargo.toml`: `metal` (default, pure Rust Metal FFI to macOS system framework). All other features (`gguf`, `mlx`, `mlx-metal`, `accelerate`, `cuda`, `cudnn`, `nccl`) have been removed. GGUF quantized inference is always available via candle's pure Rust `quantized::gguf_file` + `quantized_llama::ModelWeights`. Candle crates are vendored under `vendor/` with a `fancy-regex` patch replacing `onig` (C regex). No C/C++ compiler is required to build.
+Only one optional feature remains in `Cargo.toml`: `metal` (default, Metal FFI to macOS system framework). All other features (`gguf`, `mlx`, `mlx-metal`, `accelerate`, `cuda`, `cudnn`, `nccl`) have been removed. GGUF quantized inference is always available via candle's `quantized::gguf_file` + `quantized_llama::ModelWeights`. A C compiler is required for `onig` (transitive dependency via `candle-core`'s `tokenizers`).
 
 ## Tests and benches
 

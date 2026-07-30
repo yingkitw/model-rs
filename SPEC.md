@@ -6,7 +6,7 @@
 
 1. **Downloads** model weights from Hugging Face (mirror configurable via `MODEL_RS_MIRROR`, default in `src/config.rs`).
 2. **Lists and manages** local model directories (path resolution, copy, remove, verify, metadata).
-3. **Runs inference** on local weights: text generation, streaming generation, interactive chat (session file + slash commands), and **embeddings** for encoder-style checkpoints (e.g. BERT family). Core path uses **Candle** (pure Rust); **GGUF** quantized inference is built-in via candle's `quantized_llama::ModelWeights`. No C/C++ dependencies.
+3. **Runs inference** on local weights: text generation, streaming generation, interactive chat (session file + slash commands), and **embeddings** for encoder-style checkpoints (e.g. BERT family). Core path uses **Candle**; **GGUF** quantized inference is built-in via candle's `quantized_llama::ModelWeights`.
 4. **Serves HTTP**: OpenAI-ish `/v1/*` endpoints and **Ollama-compatible** `/api/*` routes for generate, chat, tags, embeddings, pull, copy, and delete where implemented.
 5. **Verifies integrity**: SHA-256 checksum generation and verification for downloaded model files (`verify`, `generate-checksums`).
 6. **Manages versions**: Version tracking, pinning, statistics, and cleanup for multiple model downloads (`versions` subcommands).
@@ -122,5 +122,5 @@ All CLI inputs are validated before execution (`src/validation.rs`):
 - Rust edition **2024**.
 - **Device** strings: `auto`, `cpu`, `metal` (supported); `cuda`, `mlx` accepted as strings but error at runtime (`DevicePreference` in `src/local/config.rs`).
 - **Model architectures** are auto-detected from `config.json` (`model_type`). Candle-based families: Llama, Mistral, Phi, Gemma, Qwen2/3, DeepSeek V2/V3, Kimi (DeepSeek-based), GLM-4, Mamba, BERT, Granite. GGUF quantized inference is built-in (always available, not feature-gated).
-- **Pure Rust**: no C/C++ compiler required. Candle crates vendored under `vendor/` with `fancy-regex` patch. Only feature: `metal` (default, pure Rust Metal FFI).
+- **Rust edition** 2024. A C compiler is required for `onig` (transitive dependency via `candle-core`'s `tokenizers`).
 - API payloads aim to match common OpenAI/Ollama client expectations where routes exist; refer to `src/influencer/server.rs` for authoritative request/response types.

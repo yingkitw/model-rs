@@ -1,6 +1,6 @@
 # model-rs
 
-Rust **CLI** and **library** for downloading Hugging Face models, running **local inference** with [Candle](https://github.com/huggingface/candle) (pure Rust, no C/C++ dependencies), and exposing an **HTTP server** with OpenAI-style and Ollama-compatible routes.
+Rust **CLI** and **library** for downloading Hugging Face models, running **local inference** with [Candle](https://github.com/huggingface/candle), and exposing an **HTTP server** with OpenAI-style and Ollama-compatible routes.
 
 ## What it does
 
@@ -43,18 +43,18 @@ These projects overlap on “run an LLM and talk to it over HTTP,” but they op
 | Topic | [Ollama](https://github.com/ollama/ollama) | [vLLM](https://github.com/vllm-project/vllm) | [SGLang](https://github.com/sgl-project/sglang) | **model-rs** |
 |------|-------------|--------|---------|------------|
 | **Primary focus** | Easy local models, one installer, rich desktop story | High-throughput **GPU** serving, production OpenAI-style APIs | Fast **GPU** serving, structured / multi-turn workloads, radix-style KV reuse | **Local** pull + run + small Axum server; **library + CLI** in Rust |
-| **Runtime / stack** | Go + native runners (e.g. llama.cpp path) | Python, CUDA-centric | Python, CUDA-centric | **Pure Rust** (Candle; GGUF built-in; Metal GPU via system FFI) |
+| **Runtime / stack** | Go + native runners (e.g. llama.cpp path) | Python, CUDA-centric | Python, CUDA-centric | **Rust** (Candle; GGUF built-in; Metal GPU via system FFI) |
 | **Model sources** | Ollama library / `pull` workflow | You supply model weights / HF layout for the server | Same idea—serving-oriented | **HF-oriented** download + mirror; paths under app cache |
 | **API shape** | Ollama REST is the product’s contract | **OpenAI-compatible** HTTP (and ecosystem around it) | **OpenAI-compatible** + SGLang-specific features | **Partial** Ollama `/api/*` + some **`/v1/*`** (see table below); not full parity |
-| **Sweet spot** | "Install and run" for developers and desktops | Clusters, many concurrent requests, PagedAttention-class serving | Heavy interactive / program-style LLM use on capable GPUs | Hackable **pure Rust** codebase, CPU/Metal options, integrated **HF** fetch, no C/C++ toolchain needed |
+| **Sweet spot** | "Install and run" for developers and desktops | Clusters, many concurrent requests, PagedAttention-class serving | Heavy interactive / program-style LLM use on capable GPUs | Hackable **Rust** codebase, CPU/Metal options, integrated **HF** fetch |
 
-**When to prefer something else:** use **Ollama** for the broadest turnkey local ecosystem and Modelfile-style workflows; use **vLLM** or **SGLang** when you need serious **multi-GPU** serving, scheduling, and throughput on a Python stack. Use **model-rs** when you want a **pure Rust** tool that downloads from the Hub, runs **Candle** (with built-in GGUF support), and exposes a **compatible slice** of HTTP for local testing and embedding in other Rust projects.
+**When to prefer something else:** use **Ollama** for the broadest turnkey local ecosystem and Modelfile-style workflows; use **vLLM** or **SGLang** when you need serious **multi-GPU** serving, scheduling, and throughput on a Python stack. Use **model-rs** when you want a **Rust-native** tool that downloads from the Hub, runs **Candle** (with built-in GGUF support), and exposes a **compatible slice** of HTTP for local testing and embedding in other Rust projects.
 
 ## Requirements
 
 - Rust toolchain with **edition 2024** support (recent stable).
-- **No C/C++ compiler required** — the project is pure Rust. Candle crates are vendored under `vendor/` with a `fancy-regex` patch (replacing `onig` C regex).
-- macOS: default build uses **Metal** (`metal` feature, pure Rust FFI to macOS system framework). Other platforms: use `--no-default-features` for CPU-only.
+- A C compiler is required for `onig` (regex library used transitively by `candle-core`'s `tokenizers` dependency).
+- macOS: default build uses **Metal** (`metal` feature). Other platforms: use `--no-default-features` for CPU-only.
 
 ## Quick start
 
