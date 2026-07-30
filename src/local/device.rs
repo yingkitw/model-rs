@@ -50,33 +50,14 @@ pub fn get_device(pref: DevicePreference, index: usize) -> Result<Device> {
             }
         }
         DevicePreference::Cuda => {
-            #[cfg(feature = "cuda")]
-            {
-                let device = Device::new_cuda(index).map_err(|e| {
-                    ModelError::LocalModelError(format!("CUDA GPU not available: {}", e))
-                })?;
-                info!("Using CUDA GPU");
-                return Ok(device);
-            }
-            #[cfg(not(feature = "cuda"))]
-            {
-                return Err(ModelError::InvalidConfig(
-                    "CUDA support not enabled. Build with --features cuda".to_string(),
-                ));
-            }
+            return Err(ModelError::InvalidConfig(
+                "CUDA support has been removed. Use Metal (default) or CPU.".to_string(),
+            ));
         }
         DevicePreference::Mlx => {
-            #[cfg(feature = "mlx")]
-            {
-                info!("Using MLX (Apple Silicon unified memory)");
-                return Ok(Device::Cpu);
-            }
-            #[cfg(not(feature = "mlx"))]
-            {
-                return Err(ModelError::InvalidConfig(
-                    "MLX support not enabled. Build with --features mlx".to_string(),
-                ));
-            }
+            return Err(ModelError::InvalidConfig(
+                "MLX backend has been removed. Use Metal (default) or CPU.".to_string(),
+            ));
         }
         DevicePreference::Auto => {}
     }
@@ -91,19 +72,6 @@ pub fn get_device(pref: DevicePreference, index: usize) -> Result<Device> {
             }
             Err(e) => {
                 warn!("Metal GPU not available: {}, trying other options", e);
-            }
-        }
-    }
-
-    #[cfg(feature = "cuda")]
-    {
-        match Device::new_cuda(index) {
-            Ok(device) => {
-                info!("Auto-selected CUDA GPU");
-                return Ok(device);
-            }
-            Err(e) => {
-                warn!("CUDA GPU not available: {}, falling back to CPU", e);
             }
         }
     }

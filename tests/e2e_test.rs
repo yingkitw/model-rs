@@ -228,16 +228,16 @@ fn test_list_models() {
 /// Test 5: Config command
 #[test]
 fn test_config_command() {
-    let output = run_model_rs(&["config"])
+    let output = run_model_rs(&["config", "show"])
         .expect("Should execute config command");
 
     assert!(output.status.success(), "Config command should succeed");
     let stdout = String::from_utf8_lossy(&output.stdout);
     
-    // Verify config sections are shown
+    // Verify config sections are shown (TOML format has [model], [server], etc.)
     assert!(
-        stdout.contains("Configuration Settings") || stdout.contains("Model Settings"),
-        "Config should show settings sections"
+        stdout.contains("[model]") || stdout.contains("[server]") || stdout.contains("Configuration Settings") || stdout.contains("Model Settings"),
+        "Config should show settings sections, got: {stdout}"
     );
 }
 
@@ -292,7 +292,7 @@ fn test_generate_invalid_model() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     
     assert!(
-        stderr.contains("error") || stderr.contains("not found") || stderr.contains("Failed"),
+        stderr.contains("error") || stderr.contains("Error") || stderr.contains("not found") || stderr.contains("NotFound") || stderr.contains("Failed"),
         "Should show error message"
     );
 }
@@ -867,7 +867,7 @@ async fn test_server_lifecycle() {
 #[test]
 fn test_config_with_env() {
     let output = run_model_rs_with_env(
-        &["config"],
+        &["config", "show"],
         &[
             ("MODEL_RS_TEMPERATURE", "0.5"),
             ("MODEL_RS_MAX_TOKENS", "100"),
@@ -878,20 +878,19 @@ fn test_config_with_env() {
     assert!(output.status.success(), "Config should succeed");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    // `model-rs config` renders via termimad/crossterm; captured stdout includes ANSI SGR codes,
-    // so match the Generation Parameters slice instead of a literal `- Temperature: 0.5` line.
+    // config show outputs TOML; check [generation] section for env overrides
     let generation = stdout
-        .split("Generation Parameters")
+        .split("[generation]")
         .nth(1)
-        .and_then(|s| s.split("Device Settings").next())
+        .and_then(|s| s.split("[device]").next())
         .unwrap_or("");
     assert!(
-        generation.contains("Temperature") && generation.contains("0.5"),
-        "config output should reflect MODEL_RS_TEMPERATURE=0.5 in Generation Parameters, got: {stdout}"
+        generation.contains("temperature") && generation.contains("0.5"),
+        "config output should reflect MODEL_RS_TEMPERATURE=0.5 in [generation], got: {stdout}"
     );
     assert!(
-        generation.contains("Max Tokens") && generation.contains("100"),
-        "config output should reflect MODEL_RS_MAX_TOKENS=100 in Generation Parameters, got: {stdout}"
+        generation.contains("max_tokens") && generation.contains("100"),
+        "config output should reflect MODEL_RS_MAX_TOKENS=100 in [generation], got: {stdout}"
     );
 }
 
@@ -1042,7 +1041,7 @@ fn test_output_format_consistency() {
     let commands = vec![
         vec!["--help"],
         vec!["list"],
-        vec!["config"],
+        vec!["config", "show"],
         vec!["cache", "--stats"],
     ];
 

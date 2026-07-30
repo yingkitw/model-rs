@@ -48,14 +48,14 @@ pub enum Commands {
         #[arg(
             long,
             default_value = "auto",
-            help = "Compute device: auto|cpu|metal|cuda|mlx"
+            help = "Compute device: auto|cpu|metal"
         )]
         device: String,
 
         #[arg(
             long,
             default_value = "0",
-            help = "Device index (GPU ordinal) when using metal/cuda"
+            help = "Device index (GPU ordinal) when using metal"
         )]
         device_index: usize,
     },
@@ -93,14 +93,14 @@ pub enum Commands {
         #[arg(
             long,
             default_value = "auto",
-            help = "Compute device: auto|cpu|metal|cuda|mlx"
+            help = "Compute device: auto|cpu|metal"
         )]
         device: String,
 
         #[arg(
             long,
             default_value = "0",
-            help = "Device index (GPU ordinal) when using metal/cuda"
+            help = "Device index (GPU ordinal) when using metal"
         )]
         device_index: usize,
     },
@@ -139,14 +139,14 @@ pub enum Commands {
         #[arg(
             long,
             default_value = "auto",
-            help = "Compute device: auto|cpu|metal|cuda|mlx"
+            help = "Compute device: auto|cpu|metal"
         )]
         device: String,
 
         #[arg(
             long,
             default_value = "0",
-            help = "Device index (GPU ordinal) when using metal/cuda"
+            help = "Device index (GPU ordinal) when using metal"
         )]
         device_index: usize,
 
@@ -203,14 +203,14 @@ pub enum Commands {
         #[arg(
             long,
             default_value = "auto",
-            help = "Compute device: auto|cpu|metal|cuda|mlx"
+            help = "Compute device: auto|cpu|metal"
         )]
         device: String,
 
         #[arg(
             long,
             default_value = "0",
-            help = "Device index (GPU ordinal) when using metal/cuda"
+            help = "Device index (GPU ordinal) when using metal"
         )]
         device_index: usize,
 
@@ -239,14 +239,14 @@ pub enum Commands {
         #[arg(
             long,
             default_value = "auto",
-            help = "Compute device: auto|cpu|metal|cuda|mlx"
+            help = "Compute device: auto|cpu|metal"
         )]
         device: String,
 
         #[arg(
             long,
             default_value = "0",
-            help = "Device index (GPU ordinal) when using metal/cuda"
+            help = "Device index (GPU ordinal) when using metal"
         )]
         device_index: usize,
 
@@ -265,20 +265,17 @@ pub enum Commands {
         #[arg(
             long,
             default_value = "auto",
-            help = "Compute device: auto|cpu|metal|cuda|mlx"
+            help = "Compute device: auto|cpu|metal"
         )]
         device: String,
 
         #[arg(
             long,
             default_value = "0",
-            help = "Device index (GPU ordinal) when using metal/cuda"
+            help = "Device index (GPU ordinal) when using metal"
         )]
         device_index: usize,
     },
-
-    #[command(about = "Show current configuration settings")]
-    Config,
 
     #[command(about = "Display detailed model information")]
     Show {
@@ -320,6 +317,18 @@ pub enum Commands {
         model: String,
     },
 
+    #[command(about = "Generate checksums for model verification")]
+    GenerateChecksums {
+        #[arg(help = "Model name or path to generate checksums for")]
+        model: String,
+    },
+
+    #[command(about = "Manage model versions and pinned models")]
+    Versions {
+        #[command(subcommand)]
+        command: VersionCommands,
+    },
+
     #[command(about = "Manage in-memory model cache")]
     Cache {
         #[arg(short = 's', long, help = "Show cache statistics")]
@@ -339,6 +348,77 @@ pub enum Commands {
 
         #[arg(long, help = "Set maximum cached models (requires restart)")]
         max: Option<usize>,
+    },
+
+    #[command(about = "Manage configuration")]
+    Config {
+        #[command(subcommand)]
+        command: ConfigCommands,
+    },
+}
+#[derive(Subcommand)]
+pub enum ConfigCommands {
+    #[command(about = "Initialize configuration file")]
+    Init,
+
+    #[command(about = "Edit configuration file")]
+    Edit,
+
+    #[command(about = "Show current configuration")]
+    Show,
+
+    #[command(about = "Show configuration sources")]
+    Sources,
+
+    #[command(about = "Validate configuration")]
+    Validate,
+
+    #[command(about = "Show environment-derived configuration (MODEL_RS_*)")]
+    Env,
+
+    #[command(about = "Reset to defaults")]
+    Reset,
+}
+
+#[derive(Subcommand)]
+pub enum VersionCommands {
+    #[command(about = "List all models and their versions")]
+    List {
+        #[arg(help = "Specific model to list versions for")]
+        model: Option<String>,
+    },
+
+    #[command(about = "Pin a specific version")]
+    Pin {
+        #[arg(help = "Model name")]
+        model: String,
+
+        #[arg(help = "Version to pin")]
+        version: String,
+    },
+
+    #[command(about = "Unpin a version")]
+    Unpin {
+        #[arg(help = "Model name")]
+        model: String,
+
+        #[arg(help = "Version to unpin")]
+        version: String,
+    },
+
+    #[command(about = "Show version statistics")]
+    Stats,
+
+    #[command(about = "Clean up old versions")]
+    Cleanup {
+        #[arg(help = "Specific model to clean up")]
+        model: Option<String>,
+
+        #[arg(long, default_value = "3", help = "Number of latest versions to keep")]
+        keep_latest: usize,
+
+        #[arg(long, default_value = "true", help = "Keep pinned versions")]
+        keep_pinned: bool,
     },
 }
 

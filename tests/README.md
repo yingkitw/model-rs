@@ -6,6 +6,8 @@ Integration and end-to-end tests for **model-rs**.
 
 1. **`integration_test.rs`** — API checks against a running server at `http://127.0.0.1:$MODEL_RS_PORT` (default **8080** when the variable is unset).
 2. **`e2e_test.rs`** — CLI smoke tests; several tests spawn `model-rs serve` themselves when a local model is available.
+3. **`api_error_test.rs`** — API error handling and edge-case coverage for HTTP routes (invalid payloads, missing models, malformed requests).
+4. **`error_handling_test.rs`** — Validation, model errors, and recovery paths (bad model names, invalid paths, device errors).
 
 ## Prerequisites (integration tests)
 
@@ -40,8 +42,10 @@ If the server is not running, many tests skip or no-op with a message instead of
 
 ## Coverage (high level)
 
-- **REST:** `POST /v1/generate`, streaming via `GET /v1/generate_stream` (SSE).
-- **Ollama-style:** `POST /api/generate` (stream on/off), `GET /api/tags`.
+- **REST:** `POST /v1/generate`, streaming via `POST /v1/generate_stream` (SSE), `POST /v1/generate_batch`.
+- **Ollama-style:** `POST /api/generate` (stream on/off), `POST /api/chat`, `GET /api/tags`, `POST /api/show`, `POST /api/embeddings`, `POST /api/embed`, `POST /api/pull`, `POST /api/copy`, `DELETE /api/delete`.
+- **Error handling:** invalid JSON, missing model, invalid parameters, server errors.
+- **Validation:** model name format, path traversal prevention, port/device/parameter validation.
 
 ## End-to-end tests (`e2e_test.rs`)
 

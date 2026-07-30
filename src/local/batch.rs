@@ -186,16 +186,9 @@ where
                         .to_string(),
                 ));
             }
-            #[cfg(feature = "gguf")]
             LocalBackend::Gguf { .. } => {
                 return Err(ModelError::LocalModelError(
                     "GGUF batch generation not yet supported.".to_string(),
-                ));
-            }
-            #[cfg(feature = "mlx")]
-            LocalBackend::Mlx { .. } => {
-                return Err(ModelError::LocalModelError(
-                    "MLX batch generation not yet supported.".to_string(),
                 ));
             }
         };
@@ -359,16 +352,9 @@ where
                         .to_string(),
                 ));
             }
-            #[cfg(feature = "gguf")]
             LocalBackend::Gguf { .. } => {
                 return Err(ModelError::LocalModelError(
                     "GGUF batch generation not yet supported.".to_string(),
-                ));
-            }
-            #[cfg(feature = "mlx")]
-            LocalBackend::Mlx { .. } => {
-                return Err(ModelError::LocalModelError(
-                    "MLX batch generation not yet supported.".to_string(),
                 ));
             }
         };

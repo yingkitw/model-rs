@@ -23,14 +23,9 @@ mod generation;
 mod model_cache;
 mod batch;
 
-#[cfg(feature = "gguf")]
 mod gguf_backend;
 
-#[cfg(feature = "gguf")]
 mod cache;
-
-#[cfg(feature = "mlx")]
-mod mlx_backend;
 
 // Public exports
 pub use backends::LocalBackend;
@@ -92,32 +87,18 @@ impl LocalModel {
         info!("Using device: {:?}", device);
 
         let backend = if config.device_preference == DevicePreference::Mlx {
-            #[cfg(feature = "mlx")]
-            {
-                LocalBackend::load_mlx(&config, &device)?
-            }
-            #[cfg(not(feature = "mlx"))]
-            {
-                return Err(ModelError::InvalidConfig(
-                    "MLX support not enabled. Build with --features mlx".to_string(),
-                ));
-            }
+            return Err(ModelError::InvalidConfig(
+                "MLX backend has been removed. Use Metal backend instead (default).".to_string(),
+            ));
         } else {
             match architecture {
                 ModelArchitecture::Llama => {
                     LocalBackend::load_llama(&config, &device)?
                 }
                 ModelArchitecture::LlamaQuantized => {
-                    #[cfg(feature = "gguf")]
-                    {
-                        if let Some(gguf_backend) = LocalBackend::load_gguf(&config, &device)? {
-                            Some(gguf_backend)
-                        } else {
-                            LocalBackend::load_llama(&config, &device)?
-                        }
-                    }
-                    #[cfg(not(feature = "gguf"))]
-                    {
+                    if let Some(gguf_backend) = LocalBackend::load_gguf(&config, &device)? {
+                        Some(gguf_backend)
+                    } else {
                         LocalBackend::load_llama(&config, &device)?
                     }
                 }
@@ -171,8 +152,14 @@ impl LocalModel {
 
     /// Tokenize `text` into token IDs, using a small in-memory cache.
     fn encode_ids_cached(&self, text: &str) -> Result<Vec<u32>> {
-        // Fast path: cache hit.
-        if let Some(ids) = self.tokenization_cache.lock().unwrap().get(text).cloned() {
+        // Fast path: cache hit. Recover from poison rather than panicking.
+        if let Some(ids) = self
+            .tokenization_cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(text)
+            .cloned()
+        {
             return Ok(ids);
         }
 
@@ -184,7 +171,7 @@ impl LocalModel {
 
         // Simple bounded cache: when full, clear it.
         // This keeps the implementation small and avoids extra dependencies.
-        let mut cache = self.tokenization_cache.lock().unwrap();
+        let mut cache = self.tokenization_cache.lock().unwrap_or_else(|e| e.into_inner());
         if cache.len() >= self.tokenization_cache_max {
             cache.clear();
         }
@@ -812,7 +799,6 @@ mod tests {
         assert!(matches!(arch, ModelArchitecture::Glm4));
     }
 
-    #[cfg(feature = "gguf")]
     #[test]
     fn test_detect_architecture_gguf_file() {
         let tmp = tempfile::TempDir::new().unwrap();
@@ -825,7 +811,6 @@ mod tests {
         assert!(matches!(arch, ModelArchitecture::LlamaQuantized));
     }
 
-    #[cfg(feature = "gguf")]
     #[test]
     fn test_detect_architecture_gguf_prioritizes_over_config() {
         let tmp = tempfile::TempDir::new().unwrap();
@@ -842,7 +827,6 @@ mod tests {
         assert!(matches!(arch, ModelArchitecture::LlamaQuantized));
     }
 
-    #[cfg(feature = "gguf")]
     #[test]
     fn test_detect_architecture_multiple_gguf_files() {
         let tmp = tempfile::TempDir::new().unwrap();
@@ -859,20 +843,4 @@ mod tests {
         assert!(matches!(arch, ModelArchitecture::LlamaQuantized));
     }
 
-    #[cfg(not(feature = "gguf"))]
-    #[test]
-    fn test_detect_architecture_ignores_gguf_without_feature() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        std::fs::write(
-            tmp.path().join("model-q4_k_m.gguf"),
-            b"fake gguf content",
-        ).unwrap();
-        std::fs::write(
-            tmp.path().join("config.json"),
-            r#"{"model_type":"llama"}"#,
-        ).unwrap();
-
-        let arch = detect_architecture(tmp.path()).unwrap();
-        assert!(matches!(arch, ModelArchitecture::Llama));
-    }
 }

@@ -1,59 +1,46 @@
-//! GGUF (quantized model) backend
+//! GGUF (quantized model) backend using candle's pure Rust quantized support
 //!
 //! This module provides support for loading and running GGUF format models,
 //! which offer significant memory savings through quantization.
+//! Uses candle-core's quantized GGUF reader and candle-transformers' quantized
+//! model implementations — no C/C++ dependencies.
 
-use crate::error::{InfluenceError, Result};
+use crate::error::{ModelError, Result};
 use crate::local::LocalModelConfig;
+use candle_core::quantized::gguf_file;
+use candle_core::{Device, Tensor};
+use candle_transformers::models::quantized_llama::ModelWeights as QuantizedLlama;
 use std::path::Path;
 use tracing::info;
-use tokenizers::Tokenizer;
 
-/// GGUF backend for quantized model inference
-#[cfg(feature = "gguf")]
+/// GGUF backend for quantized model inference (pure Rust)
 pub struct GgufBackend {
     context_size: usize,
     quantization: String,
     gguf_path: std::path::PathBuf,
-    model: Option<llama_cpp::LlamaModel>,
-    #[allow(dead_code)]
-    tokenizer: Option<Tokenizer>,
+    model: QuantizedLlama,
+    device: Device,
 }
 
-/// GGUF backend stub (when GGUF feature is not enabled)
-#[cfg(not(feature = "gguf"))]
-pub struct GgufBackend {
-    _private: (),
-}
-
-#[cfg(feature = "gguf")]
 impl GgufBackend {
     /// Load a GGUF model from the given path
     pub fn load(config: &LocalModelConfig, gguf_path: &Path) -> Result<Self> {
         info!("Loading GGUF model from: {}", gguf_path.display());
 
-        // Detect quantization format from filename
         let quantization = Self::detect_quantization(gguf_path)?;
         info!("Detected quantization: {}", quantization);
 
-        // Load tokenizer if available
-        let tokenizer_path = config.model_path.join("tokenizer.json");
-        let tokenizer = if tokenizer_path.exists() {
-            Some(Tokenizer::from_file(&tokenizer_path)
-                .map_err(|e| InfluenceError::LocalModelError(format!("Failed to load tokenizer: {}", e)))?)
-        } else {
-            info!("No tokenizer.json found, using model's internal tokenizer");
-            None
-        };
+        let device = Device::Cpu;
 
-        // Load the GGUF model using llama_cpp
-        let params = llama_cpp::LlamaModelParams {
-            n_ctx: config.max_seq_len as u32,
-            ..Default::default()
-        };
+        let file = std::fs::File::open(gguf_path)
+            .map_err(|e| ModelError::LocalModelError(format!("Failed to open GGUF file: {}", e)))?;
+        let mut reader = std::io::BufReader::new(file);
 
-        let model = llama_cpp::LlamaModel::load_from_file(gguf_path, params)
-            .map_err(|e| InfluenceError::GgufError(format!("Failed to load GGUF model: {}", e)))?;
+        let content = gguf_file::Content::read(&mut reader)
+            .map_err(|e| ModelError::LocalModelError(format!("Failed to parse GGUF file: {}", e)))?;
+
+        let model = QuantizedLlama::from_gguf(content, &mut reader, &device)
+            .map_err(|e| ModelError::LocalModelError(format!("Failed to load quantized model: {}", e)))?;
 
         info!("GGUF model loaded successfully (quantization: {})", quantization);
 
@@ -61,16 +48,31 @@ impl GgufBackend {
             gguf_path: gguf_path.to_path_buf(),
             context_size: config.max_seq_len,
             quantization,
-            model: Some(model),
-            tokenizer,
+            model,
+            device,
         })
     }
 
+    /// Check if a directory contains any .gguf files
+    pub fn detect_gguf(model_path: &Path) -> Result<Option<std::path::PathBuf>> {
+        if !model_path.is_dir() {
+            return Ok(None);
+        }
+        let entries = std::fs::read_dir(model_path)
+            .map_err(|e| ModelError::LocalModelError(format!("Cannot read directory: {}", e)))?;
+        for entry in entries.flatten() {
+            if entry.path().extension().map_or(false, |ext| ext == "gguf") {
+                return Ok(Some(entry.path()));
+            }
+        }
+        Ok(None)
+    }
+
     /// Detect quantization format from GGUF filename
-    fn detect_quantization(path: &Path) -> Result<String> {
+    pub fn detect_quantization(path: &Path) -> Result<String> {
         let filename = path.file_name()
             .and_then(|n| n.to_str())
-            .ok_or_else(|| InfluenceError::GgufParsingError("Invalid filename".to_string()))?;
+            .ok_or_else(|| ModelError::LocalModelError("Invalid filename".to_string()))?;
 
         let filename_lower = filename.to_lowercase();
 
@@ -97,109 +99,101 @@ impl GgufBackend {
         Ok(quant.to_string())
     }
 
-    /// Generate text from a prompt
+    /// Generate text from input token IDs
     pub fn generate_text(
         &mut self,
-        prompt: &str,
+        input_ids: &[u32],
         max_tokens: usize,
         temperature: f32,
         top_p: f32,
         top_k: Option<usize>,
-        _eos_token: Option<u32>,
+        eos_token: Option<u32>,
     ) -> Result<Vec<u32>> {
-        let model = self.model.as_ref()
-            .ok_or_else(|| InfluenceError::LocalModelError("GGUF model not loaded".to_string()))?;
+        let mut generated = Vec::new();
 
-        // Create session for generation
-        let mut session = llama_cpp::LlamaSession::new(model);
+        let prompt_tensor = Tensor::new(input_ids, &self.device)?
+            .unsqueeze(0)?;
+        let logits = self.model.forward(&prompt_tensor, 0)?;
+        let logits = logits.to_dtype(candle_core::DType::F32)?;
+        let logits_vec = logits.to_vec3::<f32>()?;
+        let last_logits = &logits_vec[0][logits_vec[0].len() - 1];
 
-        // Generate tokens
-        let params = llama_cpp::LlamaPredictParams {
-            n_predict: max_tokens as u32,
-            temperature,
-            top_p,
-            top_k: top_k.unwrap_or(0) as i32,
-            ..Default::default()
-        };
+        let mut next = sample_token(last_logits, temperature, top_p, top_k)?;
+        generated.push(next);
 
-        let mut output_tokens = Vec::new();
-        let mut callback = |token: u32| {
-            output_tokens.push(token);
-            // Stop if we hit EOS (token_id 0 is usually EOS in llama.cpp)
-            if token == 0 {
-                false // Stop generation
-            } else {
-                true // Continue
+        for idx in 1..max_tokens {
+            if let Some(eos) = eos_token {
+                if next == eos {
+                    break;
+                }
             }
-        };
 
-        session.advance(prompt, params, Some(&mut callback))
-            .map_err(|e| InfluenceError::GgufError(format!("GGUF generation failed: {}", e)))?;
+            let tensor = Tensor::new(&[next], &self.device)?.unsqueeze(0)?;
+            let logits = self.model.forward(&tensor, input_ids.len() + idx - 1)?;
+            let logits = logits.to_dtype(candle_core::DType::F32)?;
+            let logits_vec = logits.to_vec3::<f32>()?;
+            let last_logits = &logits_vec[0][0];
 
-        Ok(output_tokens)
+            next = sample_token(last_logits, temperature, top_p, top_k)?;
+            generated.push(next);
+        }
+
+        Ok(generated)
     }
 
     /// Generate text with streaming callback
     pub fn generate_text_stream<F>(
         &mut self,
-        prompt: &str,
+        input_ids: &[u32],
         max_tokens: usize,
         temperature: f32,
         top_p: f32,
         top_k: Option<usize>,
+        eos_token: Option<u32>,
         mut callback: F,
+        tokenizer: &tokenizers::Tokenizer,
     ) -> Result<()>
     where
         F: FnMut(String) -> Result<()>,
     {
-        let model = self.model.as_ref()
-            .ok_or_else(|| InfluenceError::LocalModelError("GGUF model not loaded".to_string()))?;
+        use crate::local::tokenization::stream_piece;
 
-        // Create session for generation
-        let mut session = llama_cpp::LlamaSession::new(model);
+        let mut started = false;
 
-        let params = llama_cpp::LlamaPredictParams {
-            n_predict: max_tokens as u32,
-            temperature,
-            top_p,
-            top_k: top_k.unwrap_or(0) as i32,
-            ..Default::default()
-        };
+        let prompt_tensor = Tensor::new(input_ids, &self.device)?
+            .unsqueeze(0)?;
+        let logits = self.model.forward(&prompt_tensor, 0)?;
+        let logits = logits.to_dtype(candle_core::DType::F32)?;
+        let logits_vec = logits.to_vec3::<f32>()?;
+        let last_logits = &logits_vec[0][logits_vec[0].len() - 1];
 
-        // Streaming callback that decodes tokens
-        let mut token_callback = |token: u32| {
-            if token == 0 {
-                false // Stop on EOS
-            } else {
-                // Decode single token to string
-                if let Some(tokenizer) = &self.tokenizer {
-                    let decoded = tokenizer.decode(&[token], false)
-                        .unwrap_or_else(|_| format!("<token_{}>", token));
-                    let _ = callback(decoded);
-                } else {
-                    // Fallback: just emit a placeholder
-                    let _ = callback(format!("<token_{}>", token));
+        let mut next = sample_token(last_logits, temperature, top_p, top_k)?;
+
+        if let Some(piece) = stream_piece(tokenizer, next, &mut started)? {
+            callback(piece)?;
+        }
+
+        for idx in 1..max_tokens {
+            if let Some(eos) = eos_token {
+                if next == eos {
+                    break;
                 }
-                true // Continue
             }
-        };
 
-        session.advance(prompt, params, Some(&mut token_callback))
-            .map_err(|e| InfluenceError::GgufError(format!("GGUF streaming generation failed: {}", e)))?;
+            let tensor = Tensor::new(&[next], &self.device)?.unsqueeze(0)?;
+            let logits = self.model.forward(&tensor, input_ids.len() + idx - 1)?;
+            let logits = logits.to_dtype(candle_core::DType::F32)?;
+            let logits_vec = logits.to_vec3::<f32>()?;
+            let last_logits = &logits_vec[0][0];
+
+            next = sample_token(last_logits, temperature, top_p, top_k)?;
+
+            if let Some(piece) = stream_piece(tokenizer, next, &mut started)? {
+                callback(piece)?;
+            }
+        }
 
         Ok(())
-    }
-
-    /// Generate embeddings for text
-    pub fn embed_text(&mut self, text: &str) -> Result<Vec<f32>> {
-        let model = self.model.as_ref()
-            .ok_or_else(|| InfluenceError::LocalModelError("GGUF model not loaded".to_string()))?;
-
-        // Use llama.cpp embedding functionality
-        let embeddings = model.embed_text(text)
-            .map_err(|e| InfluenceError::GgufError(format!("GGUF embedding failed: {}", e)))?;
-
-        Ok(embeddings)
     }
 
     /// Get the quantization format
@@ -218,29 +212,9 @@ impl GgufBackend {
     }
 }
 
-#[cfg(not(feature = "gguf"))]
-impl GgufBackend {
-    /// Load a GGUF model (stub when feature is not enabled)
-    pub fn load(_config: &LocalModelConfig, _gguf_path: &Path) -> Result<Self> {
-        Err(InfluenceError::InvalidConfig(
-            "GGUF support not enabled. Build with --features gguf".to_string()
-        ))
-    }
-
-    /// Get the quantization format (stub)
-    pub fn quantization(&self) -> &str {
-        "N/A"
-    }
-
-    /// Get the context size (stub)
-    pub fn context_size(&self) -> usize {
-        0
-    }
-
-    /// Get the GGUF file path (stub)
-    pub fn path(&self) -> &Path {
-        Path::new("")
-    }
+/// Simple sampling: temperature + top-p + top-k
+fn sample_token(logits: &[f32], temperature: f32, top_p: f32, top_k: Option<usize>) -> Result<u32> {
+    crate::local::sampling::do_sample(logits, temperature, top_p, top_k)
 }
 
 #[cfg(test)]
@@ -248,9 +222,7 @@ mod tests {
     use super::*;
 
     #[test]
-    #[cfg(feature = "gguf")]
     fn test_detect_quantization() {
-        // Test all supported quantization formats
         assert_eq!(
             GgufBackend::detect_quantization(Path::new("model-q2_k.gguf")).unwrap(),
             "Q2_K"
@@ -283,7 +255,6 @@ mod tests {
             GgufBackend::detect_quantization(Path::new("model-f16.gguf")).unwrap(),
             "F16"
         );
-        // Test case insensitivity
         assert_eq!(
             GgufBackend::detect_quantization(Path::new("MODEL-Q2_K.GGUF")).unwrap(),
             "Q2_K"
@@ -295,7 +266,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "gguf")]
     fn test_detect_quantization_unknown() {
         assert_eq!(
             GgufBackend::detect_quantization(Path::new("model.gguf")).unwrap(),
@@ -308,18 +278,8 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "gguf")]
     fn test_detect_quantization_invalid_path() {
         assert!(GgufBackend::detect_quantization(Path::new("")).is_err());
         assert!(GgufBackend::detect_quantization(Path::new("/")).is_err());
-    }
-
-    #[test]
-    #[cfg(not(feature = "gguf"))]
-    fn test_gguf_disabled() {
-        let config = LocalModelConfig::default();
-        let result = GgufBackend::load(&config, Path::new("test.gguf"));
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("GGUF support not enabled"));
     }
 }

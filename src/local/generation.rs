@@ -147,7 +147,6 @@ where
             device,
             &sample_fn,
         ),
-        #[cfg(feature = "gguf")]
         LocalBackend::Gguf { backend } => generate_gguf(
             backend,
             input_ids,
@@ -156,16 +155,7 @@ where
             top_p,
             top_k,
             eos_token,
-        ),
-        #[cfg(feature = "mlx")]
-        LocalBackend::Mlx { backend } => generate_mlx(
-            backend,
-            input_ids,
-            max_tokens,
-            temperature,
-            top_p,
-            top_k,
-            eos_token,
+            &sample_fn,
         ),
     }
 }
@@ -235,12 +225,7 @@ where
             model, tokenizer, input_ids, max_tokens, temp, top_p, top_k, eos_token, device,
             &sample_fn, emit,
         ),
-        #[cfg(feature = "gguf")]
         LocalBackend::Gguf { backend } => stream_gguf(
-            backend, tokenizer, input_ids, max_tokens, temp, top_p, top_k, eos_token, emit,
-        ),
-        #[cfg(feature = "mlx")]
-        LocalBackend::Mlx { backend } => stream_mlx(
             backend, tokenizer, input_ids, max_tokens, temp, top_p, top_k, eos_token, emit,
         ),
     }
@@ -1352,13 +1337,12 @@ where
 }
 
 // ============================================================================
-// GGUF Generation
+// GGUF Generation (pure Rust, using candle quantized)
 // ============================================================================
 
-#[cfg(feature = "gguf")]
 fn generate_gguf<F>(
     backend: &mut crate::local::gguf_backend::GgufBackend,
-    _input_ids: &[u32],
+    input_ids: &[u32],
     max_tokens: usize,
     temperature: f32,
     top_p: f32,
@@ -1369,50 +1353,12 @@ fn generate_gguf<F>(
 where
     F: Fn(&[f32], f32, f32, Option<usize>) -> Result<u32>,
 {
-    // GGUF uses its own sampling, so we ignore the sample_fn
-    let prompt = ""; // GGUF should handle tokenization internally
-    backend.generate_text(prompt, max_tokens, temperature, top_p, top_k, eos_token)
+    let tokens = backend.generate_text(input_ids, max_tokens, temperature, top_p, top_k, eos_token)?;
+    Ok(tokens)
 }
 
-#[cfg(feature = "gguf")]
 fn stream_gguf<F>(
     backend: &mut crate::local::gguf_backend::GgufBackend,
-    _tokenizer: &tokenizers::Tokenizer,
-    _input_ids: &[u32],
-    max_tokens: usize,
-    temp: f32,
-    top_p: f32,
-    top_k: Option<usize>,
-    _eos_token: Option<u32>,
-    emit: F,
-) -> Result<()>
-where
-    F: FnMut(String) -> Result<()>,
-{
-    let prompt = ""; // GGUF handles tokenization
-    backend.generate_text_stream(prompt, max_tokens, temp, top_p, top_k, emit)
-}
-
-// ============================================================================
-// MLX Generation
-// ============================================================================
-
-#[cfg(feature = "mlx")]
-fn generate_mlx(
-    backend: &mut crate::local::mlx_backend::MlxBackend,
-    input_ids: &[u32],
-    max_tokens: usize,
-    temperature: f32,
-    top_p: f32,
-    top_k: Option<usize>,
-    eos_token: Option<u32>,
-) -> Result<GenerationResult> {
-    backend.generate_text(input_ids, max_tokens, temperature, top_p, top_k, eos_token)
-}
-
-#[cfg(feature = "mlx")]
-fn stream_mlx<F>(
-    backend: &mut crate::local::mlx_backend::MlxBackend,
     tokenizer: &tokenizers::Tokenizer,
     input_ids: &[u32],
     max_tokens: usize,
@@ -1421,11 +1367,9 @@ fn stream_mlx<F>(
     top_k: Option<usize>,
     eos_token: Option<u32>,
     emit: F,
-) -> Result<()>
+) -> std::result::Result<(), crate::error::ModelError>
 where
-    F: FnMut(String) -> Result<()>,
+    F: FnMut(String) -> std::result::Result<(), crate::error::ModelError>,
 {
-    backend.generate_text_stream(
-        input_ids, max_tokens, temp, top_p, top_k, eos_token, emit, tokenizer,
-    )
+    backend.generate_text_stream(input_ids, max_tokens, temp, top_p, top_k, eos_token, emit, tokenizer)
 }

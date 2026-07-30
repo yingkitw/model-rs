@@ -3,7 +3,7 @@
 //! This module provides efficient cache reuse for multi-turn conversations,
 //! addressing the limitation of creating fresh caches per request.
 
-use crate::error::{InfluenceError, Result};
+use crate::error::Result;
 use crate::local::config::ModelArchitecture;
 use crate::local::backends::LocalBackend;
 use std::collections::HashMap;

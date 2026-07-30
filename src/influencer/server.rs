@@ -1030,7 +1030,11 @@ mod tests {
             "rms_norm_eps": 1e-5,
             "rope_theta": 10000.0
         });
-        std::fs::write(dir.join("config.json"), serde_json::to_vec_pretty(&cfg).unwrap()).unwrap();
+        std::fs::write(
+            dir.join("config.json"),
+            serde_json::to_vec_pretty(&cfg).expect("serialize test config"),
+        )
+        .expect("write test config.json");
     }
 
     fn write_minimal_tokenizer(dir: &std::path::Path) {
@@ -1052,11 +1056,11 @@ mod tests {
     "unk_token": "<unk>"
   }
 }"#;
-        std::fs::write(dir.join("tokenizer.json"), tokenizer.as_bytes()).unwrap();
+        std::fs::write(dir.join("tokenizer.json"), tokenizer.as_bytes()).expect("write test tokenizer.json");
     }
 
     async fn build_test_app() -> (tempfile::TempDir, Router) {
-        let dir = tempdir().unwrap();
+        let dir = tempdir().expect("create tempdir");
         write_minimal_llama_config(dir.path());
         write_minimal_tokenizer(dir.path());
 
@@ -1069,7 +1073,7 @@ mod tests {
             device_index: 0,
             ..Default::default()
         };
-        let _ = global_model_cache().preload(config).await.unwrap();
+        let _ = global_model_cache().preload(config).await.expect("preload model");
 
         let state = AppState {
             default_model_path: dir.path().to_path_buf(),

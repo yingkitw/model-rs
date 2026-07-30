@@ -91,16 +91,9 @@ pub enum LocalBackend {
         config: Glm4Config,
     },
 
-    /// GGUF quantized model backend (feature-gated)
-    #[cfg(feature = "gguf")]
+    /// GGUF quantized model backend (pure Rust, using candle quantized)
     Gguf {
         backend: super::gguf_backend::GgufBackend,
-    },
-
-    /// MLX backend for Apple Silicon GPU acceleration (feature-gated)
-    #[cfg(feature = "mlx")]
-    Mlx {
-        backend: super::mlx_backend::MlxBackend,
     },
 }
 
@@ -632,8 +625,7 @@ impl LocalBackend {
     ///
     /// GGUF models offer significant memory savings through quantization.
     /// The quantization format is auto-detected from the filename.
-    #[cfg(feature = "gguf")]
-    pub fn load_gguf(config: &LocalModelConfig, device: &Device) -> Result<Option<Self>> {
+    pub fn load_gguf(config: &LocalModelConfig, _device: &Device) -> Result<Option<Self>> {
         use std::fs;
         info!("Loading GGUF model...");
 
@@ -666,26 +658,11 @@ impl LocalBackend {
         Ok(Some(LocalBackend::Gguf { backend }))
     }
 
-    /// Load a GGUF model (stub when GGUF feature is not enabled)
-    #[cfg(not(feature = "gguf"))]
-    pub fn load_gguf(_config: &LocalModelConfig, _device: &Device) -> Result<Option<Self>> {
-        Ok(None)
-    }
-
-    /// Load a model using the MLX backend (Apple Silicon GPU acceleration)
-    #[cfg(feature = "mlx")]
-    pub fn load_mlx(config: &LocalModelConfig, _device: &Device) -> Result<Option<Self>> {
-        info!("Loading model via MLX backend...");
-
-        let backend = super::mlx_backend::MlxBackend::load(config)?;
-        info!("MLX model loaded successfully");
-        Ok(Some(LocalBackend::Mlx { backend }))
-    }
-
-    /// Load a model using MLX (stub when feature is not enabled)
-    #[cfg(not(feature = "mlx"))]
+    /// Load a model using the MLX backend (removed — use Metal instead)
     pub fn load_mlx(_config: &LocalModelConfig, _device: &Device) -> Result<Option<Self>> {
-        Ok(None)
+        Err(ModelError::InvalidConfig(
+            "MLX backend has been removed. Use Metal backend instead (default).".to_string(),
+        ))
     }
 }
 

@@ -5,7 +5,6 @@ use std::path::Path;
 use tracing::warn;
 
 pub fn detect_architecture(model_path: &Path) -> Result<ModelArchitecture> {
-    #[cfg(feature = "gguf")]
     {
         use super::gguf_backend::GgufBackend;
         if let Ok(Some(_)) = GgufBackend::detect_gguf(model_path) {

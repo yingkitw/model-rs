@@ -36,7 +36,7 @@ pub struct ModelCache {
     /// Map from model path to cached model
     cache: Mutex<HashMap<PathBuf, CachedModel>>,
     /// Maximum number of models to keep in cache
-    max_cached_models: usize,
+    max_cached_models: Mutex<usize>,
     /// Maximum age before a model is evicted (unused)
     max_idle_duration: Duration,
     /// Whether caching is enabled
@@ -48,7 +48,7 @@ impl ModelCache {
     pub fn new() -> Self {
         Self {
             cache: Mutex::new(HashMap::new()),
-            max_cached_models: 3, // Default: cache up to 3 models
+            max_cached_models: Mutex::new(3), // Default: cache up to 3 models
             max_idle_duration: Duration::from_secs(3600), // 1 hour
             enabled: Mutex::new(true),
         }
@@ -58,7 +58,7 @@ impl ModelCache {
     pub fn with_config(max_cached_models: usize, max_idle_duration: Duration) -> Self {
         Self {
             cache: Mutex::new(HashMap::new()),
-            max_cached_models,
+            max_cached_models: Mutex::new(max_cached_models),
             max_idle_duration,
             enabled: Mutex::new(true),
         }
@@ -193,10 +193,18 @@ impl ModelCache {
 
         CacheStats {
             cached_models: cache.len(),
-            max_cached_models: self.max_cached_models,
+            max_cached_models: *self.max_cached_models.lock().unwrap(),
             enabled: self.is_enabled(),
             models,
         }
+    }
+
+    /// Update the maximum number of models kept in the cache.
+    ///
+    /// Models currently in the cache are not evicted to satisfy the new
+    /// limit; the new ceiling takes effect on subsequent inserts.
+    pub fn set_max_cached_models(&self, max: usize) {
+        *self.max_cached_models.lock().unwrap() = max;
     }
 
     /// Clean up models that haven't been accessed recently
@@ -220,7 +228,8 @@ impl ModelCache {
 
     /// Evict models if the cache is at capacity
     fn evict_if_needed(&self, cache: &mut HashMap<PathBuf, CachedModel>) {
-        if cache.len() >= self.max_cached_models {
+        let max = *self.max_cached_models.lock().unwrap();
+        if cache.len() >= max {
             // Find the least recently used model
             if let Some((lru_path, _)) = cache
                 .iter()
@@ -231,7 +240,7 @@ impl ModelCache {
                 warn!(
                     "Evicted LRU model '{}' from cache (capacity: {})",
                     path.display(),
-                    self.max_cached_models
+                    max
                 );
             }
         }
@@ -287,14 +296,21 @@ mod tests {
     fn test_cache_creation() {
         let cache = ModelCache::new();
         assert!(cache.is_enabled());
-        assert_eq!(cache.max_cached_models, 3);
+        assert_eq!(*cache.max_cached_models.lock().unwrap(), 3);
     }
 
     #[test]
     fn test_cache_configuration() {
         let cache = ModelCache::with_config(5, Duration::from_secs(7200));
-        assert_eq!(cache.max_cached_models, 5);
+        assert_eq!(*cache.max_cached_models.lock().unwrap(), 5);
         assert_eq!(cache.max_idle_duration.as_secs(), 7200);
+    }
+
+    #[test]
+    fn test_set_max_cached_models() {
+        let cache = ModelCache::new();
+        cache.set_max_cached_models(7);
+        assert_eq!(*cache.max_cached_models.lock().unwrap(), 7);
     }
 
     #[test]

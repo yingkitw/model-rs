@@ -18,7 +18,7 @@ impl ModelOperations {
         }
     }
 
-    fn get_models_dir() -> Result<PathBuf> {
+    pub fn get_models_dir() -> Result<PathBuf> {
         let proj_dirs = ProjectDirs::from("com", "modelrs", "modelrs").ok_or_else(|| {
             ModelError::InvalidConfig("Could not determine home directory".to_string())
         })?;
